@@ -38,3 +38,6 @@ go.work.sum
 *.sig
 *.key
 *.crt
+
+# Binaries for Go
+bin/
