@@ -52,12 +52,45 @@ type TelegramConfig struct {
 	ChatID       string        `yaml:"chat_id"`
 	Timeout      time.Duration `yaml:"timeout"`
 	RatePerMinute int          `yaml:"rate_per_minute"`
+	Debug        bool          `yaml:"debug"`
+	Webhook      WebhookConfig `yaml:"webhook"`
+	MessageFormat MessageFormatConfig `yaml:"message_format"`
+}
+
+type WebhookConfig struct {
+	Enabled     bool   `yaml:"enabled"`
+	URL         string `yaml:"url"`
+	SecretToken string `yaml:"secret_token"`
+	MaxConnections int  `yaml:"max_connections"`
+	AllowedUpdates []string `yaml:"allowed_updates"`
+}
+
+type MessageFormatConfig struct {
+	EscapeMarkdown    bool     `yaml:"escape_markdown"`
+	DisableWebPreview bool     `yaml:"disable_web_preview"`
+	EnableHTML        bool     `yaml:"enable_html"`
+	ShowTimestamp     bool     `yaml:"show_timestamp"`
+	IncludeSeverity   bool     `yaml:"include_severity"`
+	MaxMessageLength  int      `yaml:"max_message_length"`
+	CustomPrefix      string   `yaml:"custom_prefix"`
+	CustomSuffix      string   `yaml:"custom_suffix"`
+	SeverityColors    SeverityColors `yaml:"severity_colors"`
+}
+
+type SeverityColors struct {
+	Critical string `yaml:"critical"`
+	High     string `yaml:"high"`
+	Medium   string `yaml:"medium"`
+	Low      string `yaml:"low"`
+	Unknown  string `yaml:"unknown"`
 }
 
 type EmailConfig struct {
 	Enabled bool           `yaml:"enabled"`
 	SMTP    SMTPConfig     `yaml:"smtp"`
 	To      []string       `yaml:"to"`
+	CC      []string       `yaml:"cc"`
+	BCC     []string       `yaml:"bcc"`
 	SubjectPrefix string    `yaml:"subject_prefix"`
 }
 
@@ -277,6 +310,29 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("notify.telegram.enabled", false)
 	v.SetDefault("notify.telegram.timeout", "5s")
 	v.SetDefault("notify.telegram.rate_per_minute", 30)
+	v.SetDefault("notify.telegram.debug", false)
+	
+	// Telegram webhook configuration
+	v.SetDefault("notify.telegram.webhook.enabled", false)
+	v.SetDefault("notify.telegram.webhook.max_connections", 40)
+	v.SetDefault("notify.telegram.webhook.allowed_updates", []string{"message", "edited_message", "callback_query"})
+	
+	// Telegram message format configuration
+	v.SetDefault("notify.telegram.message_format.escape_markdown", true)
+	v.SetDefault("notify.telegram.message_format.disable_web_preview", true)
+	v.SetDefault("notify.telegram.message_format.enable_html", false)
+	v.SetDefault("notify.telegram.message_format.show_timestamp", true)
+	v.SetDefault("notify.telegram.message_format.include_severity", true)
+	v.SetDefault("notify.telegram.message_format.max_message_length", 4096)
+	v.SetDefault("notify.telegram.message_format.custom_prefix", "")
+	v.SetDefault("notify.telegram.message_format.custom_suffix", "")
+	
+	// Telegram severity colors
+	v.SetDefault("notify.telegram.message_format.severity_colors.critical", "🔴")
+	v.SetDefault("notify.telegram.message_format.severity_colors.high", "🟠")
+	v.SetDefault("notify.telegram.message_format.severity_colors.medium", "🟡")
+	v.SetDefault("notify.telegram.message_format.severity_colors.low", "🟢")
+	v.SetDefault("notify.telegram.message_format.severity_colors.unknown", "⚪")
 	
 	// Email notification configuration
 	v.SetDefault("notify.email.enabled", false)
@@ -435,6 +491,27 @@ func (c *Config) validateNotifyConfig() error {
 		}
 		if c.Notify.Telegram.RatePerMinute <= 0 {
 			return errors.New("Telegram rate per minute must be positive")
+		}
+		if c.Notify.Telegram.Timeout <= 0 {
+			return errors.New("Telegram timeout must be positive")
+		}
+		
+		// Validate webhook configuration
+		if c.Notify.Telegram.Webhook.Enabled {
+			if c.Notify.Telegram.Webhook.URL == "" {
+				return errors.New("Telegram webhook URL is required when webhook is enabled")
+			}
+			if c.Notify.Telegram.Webhook.MaxConnections <= 0 {
+				return errors.New("Telegram webhook max connections must be positive")
+			}
+		}
+		
+		// Validate message format configuration
+		if c.Notify.Telegram.MessageFormat.MaxMessageLength <= 0 {
+			return errors.New("Telegram message format max message length must be positive")
+		}
+		if c.Notify.Telegram.MessageFormat.MaxMessageLength > 4096 {
+			return errors.New("Telegram message format max message length cannot exceed 4096 characters")
 		}
 	}
 

@@ -4,6 +4,7 @@ go 1.25.1
 
 require (
 	github.com/go-chi/chi/v5 v5.2.3
+	github.com/go-telegram/bot v1.17.0
 	github.com/joho/godotenv v1.5.1
 	github.com/spf13/pflag v1.0.10
 	github.com/spf13/viper v1.21.0
