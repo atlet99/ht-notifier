@@ -1,0 +1,26 @@
+{{/* Advanced Telegram template for successful scan */}}
+{{.Title}}
+
+{{.Body}}
+
+{{if .SeverityCounts}}
+📊 <b>Scan Summary:</b>
+{{range $severity, $count := .SeverityCounts}}
+  {{- $icon := severityIcon $severity -}}
+  {{- printf "%s <b>%s</b>: %d" $icon (title $severity) $count -}}
+  {{- if gt $count 0}} 🔥{{end}}
+  {{- "\n" -}}
+{{end}}
+
+{{- if hasVulnerabilities .SeverityCounts}}
+🔥 <b>Total Vulnerabilities:</b> {{totalVulnerabilities .SeverityCounts}}
+{{- end}}
+{{end}}
+
+{{if .Link}}
+🔗 <b>View in Harbor:</b> {{.Link}}
+{{end}}
+
+{{if .ShowTimestamp}}
+⏰ <b>Timestamp:</b> {{formatTimestamp .Timestamp}}
+{{end}}

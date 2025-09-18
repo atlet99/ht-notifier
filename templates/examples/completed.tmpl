@@ -1,0 +1,18 @@
+{{.Title}}
+
+{{.Body}}
+
+{{if .SeverityCounts}}
+📊 Scan Summary:
+{{range $severity, $count := .SeverityCounts}}
+  {{if gt $count 0}}
+    {{- severityIcon $severity}} {{title $severity}}: {{criticalCount .}} ({{totalVulnerabilities .}})
+  {{end}}
+{{end}}
+{{end}}
+
+{{if .Link}}
+🔗 View in Harbor: {{.Link}}
+{{end}}
+
+🕐 Timestamp: {{formatTimestamp .Timestamp}}

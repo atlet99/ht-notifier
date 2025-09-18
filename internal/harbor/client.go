@@ -153,6 +153,11 @@ func (c *Client) newRequest(ctx context.Context, method, path string, body inter
 	return req, nil
 }
 
+// BaseURL returns the base URL of the client
+func (c *Client) BaseURL() string {
+	return c.baseURL.String()
+}
+
 // do executes an HTTP request and decodes the response
 func (c *Client) do(req *http.Request, v interface{}) error {
 	resp, err := c.httpClient.Do(req)

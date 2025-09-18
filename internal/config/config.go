@@ -21,6 +21,7 @@ type Config struct {
 	Notify      NotifyConfig      `yaml:"notify"`
 	Processing  ProcessingConfig  `yaml:"processing"`
 	Observability ObservabilityConfig `yaml:"observability"`
+	Templates   TemplateConfig    `yaml:"templates"`
 }
 
 type ServerConfig struct {
@@ -56,6 +57,7 @@ type TelegramConfig struct {
 	Debug        bool          `yaml:"debug"`
 	Webhook      WebhookConfig `yaml:"webhook"`
 	MessageFormat MessageFormatConfig `yaml:"message_format"`
+	Templates    TemplateConfig `yaml:"templates"`
 }
 
 type WebhookConfig struct {
@@ -78,6 +80,14 @@ type MessageFormatConfig struct {
 	SeverityColors    SeverityColors `yaml:"severity_colors"`
 }
 
+// TemplateConfig holds template configuration
+type TemplateConfig struct {
+	Enabled    bool   `yaml:"enabled"`
+	Path       string `yaml:"path"`
+	Reload     bool   `yaml:"reload"` // Enable hot reload of templates
+	WatchFiles bool   `yaml:"watch_files"` // Watch template files for changes
+}
+
 type SlackConfig struct {
 	Enabled          bool          `yaml:"enabled"`
 	Token            string        `yaml:"token"`
@@ -86,6 +96,7 @@ type SlackConfig struct {
 	RatePerMinute    int           `yaml:"rate_per_minute"`
 	Debug            bool          `yaml:"debug"`
 	MessageFormat    MessageFormatConfig `yaml:"message_format"`
+	Templates        TemplateConfig `yaml:"templates"`
 	Username         string        `yaml:"username"`
 	IconEmoji        string        `yaml:"icon_emoji"`
 	IconURL          string        `yaml:"icon_url"`
@@ -352,6 +363,12 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("notify.telegram.message_format.severity_colors.low", "🟢")
 	v.SetDefault("notify.telegram.message_format.severity_colors.unknown", "⚪")
 	
+	// Telegram template configuration
+	v.SetDefault("notify.telegram.templates.enabled", false)
+	v.SetDefault("notify.telegram.templates.path", "")
+	v.SetDefault("notify.telegram.templates.reload", false)
+	v.SetDefault("notify.telegram.templates.watch_files", false)
+	
 	// Slack notification configuration
 	v.SetDefault("notify.slack.enabled", false)
 	v.SetDefault("notify.slack.timeout", "5s")
@@ -380,6 +397,12 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("notify.slack.message_format.severity_colors.medium", "🟡")
 	v.SetDefault("notify.slack.message_format.severity_colors.low", "🟢")
 	v.SetDefault("notify.slack.message_format.severity_colors.unknown", "⚪")
+	
+	// Slack template configuration
+	v.SetDefault("notify.slack.templates.enabled", false)
+	v.SetDefault("notify.slack.templates.path", "")
+	v.SetDefault("notify.slack.templates.reload", false)
+	v.SetDefault("notify.slack.templates.watch_files", false)
 	
 	// Email notification configuration
 	v.SetDefault("notify.email.enabled", false)
@@ -449,6 +472,12 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("observability.metrics_addr", ":9090")
 	v.SetDefault("observability.log.level", "info")
 	v.SetDefault("observability.log.format", "json")
+	
+	// Global template configuration
+	v.SetDefault("templates.enabled", false)
+	v.SetDefault("templates.path", "")
+	v.SetDefault("templates.reload", false)
+	v.SetDefault("templates.watch_files", false)
 }
 
 func bindFlags(v *viper.Viper) {

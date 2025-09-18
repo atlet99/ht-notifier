@@ -1,0 +1,11 @@
+{{.Title}}
+
+{{.Body}}
+
+❌ Scan failed for repository: {{default "unknown" .Labels.repository}}
+
+{{if .Link}}
+🔗 View in Harbor: {{.Link}}
+{{end}}
+
+🕐 Timestamp: {{formatTimestamp .Timestamp}}
