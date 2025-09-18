@@ -3,53 +3,110 @@ package notif
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"fmt"
 	"html/template"
-	"net/smtp"
 	"strings"
 	"time"
 
 	"github.com/atlet99/ht-notifier/internal/config"
+	"github.com/wneessen/go-mail"
 )
 
-// Email implements the Notifier interface for SMTP email
+// Email implements the Notifier interface for SMTP email using go-mail
 type Email struct {
+	client     *mail.Client
 	smtpConfig config.SMTPConfig
 	emailConfig config.EmailConfig
 	from       string
 	to         []string
 	subject    string
 	prefix     string
-	client     *smtp.Client
 	limiter    RateLimiter
 }
 
-// NewEmail creates a new email notifier
+// NewEmail creates a new email notifier using go-mail with enhanced authentication and SSL support
 func NewEmail(cfg config.EmailConfig, limiter RateLimiter) (*Email, error) {
 	// Validate SMTP configuration
 	if err := validateSMTPConfig(cfg.SMTP); err != nil {
 		return nil, fmt.Errorf("invalid SMTP configuration: %w", err)
 	}
 
-	// Create email client
-	client, err := createSMTPClient(cfg.SMTP)
+	// Create go-mail client with options
+	opts := []mail.Option{
+		mail.WithPort(cfg.SMTP.Port),
+		mail.WithUsername(cfg.SMTP.Username),
+		mail.WithPassword(cfg.SMTP.Password),
+		mail.WithTimeout(cfg.SMTP.Timeout),
+	}
+
+	// Configure authentication
+	authType, err := getSMTPAuthType(cfg.SMTP.AuthType)
+	if err != nil {
+		return nil, fmt.Errorf("failed to configure SMTP authentication: %w", err)
+	}
+	opts = append(opts, mail.WithSMTPAuth(authType))
+
+	// Configure SSL/TLS with enhanced settings
+	tlsPolicy, err := getTLSPolicy(cfg.SMTP.Encryption)
+	if err != nil {
+		return nil, fmt.Errorf("failed to configure SMTP encryption: %w", err)
+	}
+
+	// Use TLSPortPolicy for automatic port selection and fallback
+	opts = append(opts, mail.WithTLSPortPolicy(tlsPolicy))
+
+	// Configure SSL if needed (for implicit SSL)
+	if cfg.SMTP.Encryption == "ssl" {
+		opts = append(opts, mail.WithSSL())
+	}
+
+	// Configure HELO/EHLO hostname if specified
+	if cfg.SMTP.HELOHost != "" {
+		opts = append(opts, mail.WithHELO(cfg.SMTP.HELOHost))
+	}
+
+	// Configure local name if specified
+	if cfg.SMTP.LocalName != "" {
+		// Note: go-mail doesn't have a direct WithLocalName option,
+		// but we can set it via HELO
+		opts = append(opts, mail.WithHELO(cfg.SMTP.LocalName))
+	}
+
+	// Configure SSL/TLS insecure options if specified
+	if cfg.SMTP.SSLInsecure || cfg.SMTP.SSNOCHECK {
+		// Create custom TLS config for insecure connections
+		tlsConfig := &tls.Config{
+			InsecureSkipVerify: true,
+			ServerName:         cfg.SMTP.Host,
+		}
+		opts = append(opts, mail.WithTLSConfig(tlsConfig))
+	}
+
+	// Configure NOOP skipping for Exchange servers
+	if cfg.SMTP.DisableHELO {
+		opts = append(opts, mail.WithoutNoop())
+	}
+
+	// Create client
+	client, err := mail.NewClient(cfg.SMTP.Host, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create SMTP client: %w", err)
 	}
 
 	return &Email{
+		client:     client,
 		smtpConfig: cfg.SMTP,
 		emailConfig: cfg,
 		from:       cfg.SMTP.From,
 		to:         cfg.To,
 		subject:    cfg.SubjectPrefix,
 		prefix:     cfg.SubjectPrefix,
-		client:     client,
 		limiter:    limiter,
 	}, nil
 }
 
-// Send implements the Notifier interface
+// Send implements the Notifier interface using go-mail
 func (e *Email) Send(ctx context.Context, msg Message) error {
 	// Apply rate limiting if configured
 	if e.limiter != nil {
@@ -67,50 +124,22 @@ func (e *Email) Send(ctx context.Context, msg Message) error {
 		return fmt.Errorf("failed to format email body: %w", err)
 	}
 
-	// Create email message
-	from := e.from
-	to := strings.Join(e.to, ",")
-	
-	// Create headers
-	headers := map[string]string{
-		"From":         from,
-		"To":           to,
-		"Subject":      subject,
-		"MIME-Version": "1.0",
-		"Content-Type": "text/html; charset=\"UTF-8\"",
-	}
-	
-	// Build message
-	message := ""
-	for k, v := range headers {
-		message += fmt.Sprintf("%s: %s\r\n", k, v)
-	}
-	message += "\r\n" + body
-
-	// Send email
-	if err := e.client.Mail(e.from); err != nil {
+	// Create new message
+	m := mail.NewMsg()
+	if err := m.From(e.from); err != nil {
 		return fmt.Errorf("failed to set from address: %w", err)
 	}
-	
-	for _, recipient := range e.to {
-		if err := e.client.Rcpt(recipient); err != nil {
-			return fmt.Errorf("failed to set recipient %s: %w", recipient, err)
-		}
+
+	if err := m.To(e.to...); err != nil {
+		return fmt.Errorf("failed to set recipients: %w", err)
 	}
-	
-	w, err := e.client.Data()
-	if err != nil {
-		return fmt.Errorf("failed to create data writer: %w", err)
-	}
-	
-	_, err = w.Write([]byte(message))
-	if err != nil {
-		return fmt.Errorf("failed to write message: %w", err)
-	}
-	
-	err = w.Close()
-	if err != nil {
-		return fmt.Errorf("failed to close data writer: %w", err)
+
+	m.Subject(subject)
+	m.SetBodyString(mail.TypeTextHTML, body)
+
+	// Send email
+	if err := e.client.Send(m); err != nil {
+		return fmt.Errorf("failed to send email: %w", err)
 	}
 
 	return nil
@@ -353,110 +382,312 @@ func validateSMTPConfig(cfg config.SMTPConfig) error {
 		return fmt.Errorf("SMTP from address is required")
 	}
 	
-	// Note: SMTPConfig doesn't have To field, validation is done at the EmailConfig level
-	
 	return nil
 }
 
-// createSMTPClient creates an SMTP client
-func createSMTPClient(cfg config.SMTPConfig) (*smtp.Client, error) {
-	addr := fmt.Sprintf("%s:%d", cfg.Host, cfg.Port)
-	
-	// Connect to SMTP server
-	client, err := smtp.Dial(addr)
-	if err != nil {
-		return nil, fmt.Errorf("failed to connect to SMTP server: %w", err)
+// getSMTPAuthType converts string to SMTPAuthType with full go-mail support
+func getSMTPAuthType(authType string) (mail.SMTPAuthType, error) {
+	switch strings.ToLower(authType) {
+	case "plain", "login":
+		return mail.SMTPAuthPlain, nil
+	case "plain-noenc":
+		return mail.SMTPAuthPlainNoEnc, nil
+	case "login-noenc":
+		return mail.SMTPAuthLoginNoEnc, nil
+	case "cram-md5", "crammd5", "cram":
+		return mail.SMTPAuthCramMD5, nil
+	case "scram-sha-1", "scram-sha1", "scramsha1":
+		return mail.SMTPAuthSCRAMSHA1, nil
+	case "scram-sha-1-plus", "scram-sha1-plus", "scramsha1plus":
+		return mail.SMTPAuthSCRAMSHA1PLUS, nil
+	case "scram-sha-256", "scram-sha256", "scramsha256":
+		return mail.SMTPAuthSCRAMSHA256, nil
+	case "scram-sha-256-plus", "scram-sha256-plus", "scramsha256plus":
+		return mail.SMTPAuthSCRAMSHA256PLUS, nil
+	case "xoauth2", "oauth2":
+		return mail.SMTPAuthXOAUTH2, nil
+	case "auto", "autodiscover", "autodiscovery":
+		return mail.SMTPAuthAutoDiscover, nil
+	case "none", "noauth", "no":
+		return mail.SMTPAuthNoAuth, nil
+	default:
+		return "", fmt.Errorf("unsupported authentication type: %s", authType)
 	}
-	
-	// Start TLS if configured
-	if cfg.StartTLS {
-		if ok, _ := client.Extension("STARTTLS"); ok {
-			if err := client.StartTLS(nil); err != nil {
-				client.Close()
-				return nil, fmt.Errorf("failed to start TLS: %w", err)
-			}
-		}
-	}
-	
-	// Authenticate if credentials are provided
-	if cfg.Username != "" && cfg.Password != "" {
-		auth := smtp.PlainAuth("", cfg.Username, cfg.Password, cfg.Host)
-		if err := client.Auth(auth); err != nil {
-			client.Close()
-			return nil, fmt.Errorf("failed to authenticate: %w", err)
-		}
-	}
-	
-	return client, nil
 }
 
-// TestConnection tests the SMTP connection
-func (e *Email) TestConnection(ctx context.Context) error {
-	// Create a test message
-	from := e.from
-	to := strings.Join(e.to, ",")
-	
-	// Create headers
-	headers := map[string]string{
-		"From":         from,
-		"To":           to,
-		"Subject":      "Test message from Harbor Notifier",
-		"MIME-Version": "1.0",
-		"Content-Type": "text/plain; charset=\"UTF-8\"",
+// getTLSPolicy converts string to TLSPolicy with full go-mail support
+func getTLSPolicy(encryption string) (mail.TLSPolicy, error) {
+	switch strings.ToLower(encryption) {
+	case "ssl":
+		return mail.TLSMandatory, nil
+	case "tls":
+		return mail.TLSOpportunistic, nil
+	case "none", "no":
+		return mail.NoTLS, nil
+	default:
+		return mail.NoTLS, fmt.Errorf("unsupported encryption type: %s", encryption)
 	}
-	
-	// Build message
-	message := ""
-	for k, v := range headers {
-		message += fmt.Sprintf("%s: %s\r\n", k, v)
-	}
-	message += "\r\nThis is a test message to verify SMTP connectivity."
+}
 
-	// Send test message
-	if err := e.client.Mail(e.from); err != nil {
+// TestConnection tests the SMTP connection using go-mail
+func (e *Email) TestConnection(ctx context.Context) error {
+	// Create test message
+	m := mail.NewMsg()
+	if err := m.From(e.from); err != nil {
 		return fmt.Errorf("failed to set from address: %w", err)
 	}
-	
-	for _, recipient := range e.to {
-		if err := e.client.Rcpt(recipient); err != nil {
-			return fmt.Errorf("failed to set recipient %s: %w", recipient, err)
-		}
+
+	if err := m.To(e.to...); err != nil {
+		return fmt.Errorf("failed to set recipients: %w", err)
 	}
-	
-	w, err := e.client.Data()
-	if err != nil {
-		return fmt.Errorf("failed to create data writer: %w", err)
-	}
-	
-	_, err = w.Write([]byte(message))
-	if err != nil {
-		return fmt.Errorf("failed to write message: %w", err)
-	}
-	
-	err = w.Close()
-	if err != nil {
-		return fmt.Errorf("failed to close data writer: %w", err)
+
+	m.Subject("Test message from Harbor Notifier")
+	m.SetBodyString(mail.TypeTextPlain, "This is a test message to verify SMTP connectivity.")
+
+	// Send test message
+	if err := e.client.Send(m); err != nil {
+		return fmt.Errorf("failed to send test message: %w", err)
 	}
 
 	return nil
+}
+
+// TestAuthConnection tests SMTP connection with authentication only
+func (e *Email) TestAuthConnection(ctx context.Context) error {
+	// Create test message
+	m := mail.NewMsg()
+	if err := m.From(e.from); err != nil {
+		return fmt.Errorf("failed to set from address: %w", err)
+	}
+
+	if err := m.To(e.to[0]); err != nil {
+		return fmt.Errorf("failed to set recipient: %w", err)
+	}
+
+	m.Subject("Authentication Test")
+	m.SetBodyString(mail.TypeTextPlain, "This is a test message to verify SMTP authentication.")
+
+	// Send test message
+	if err := e.client.Send(m); err != nil {
+		return fmt.Errorf("failed to send authentication test: %w", err)
+	}
+
+	return nil
+}
+
+// TestTLSSConnection tests SMTP connection with TLS encryption
+func (e *Email) TestTLSSConnection(ctx context.Context) error {
+	// Create test message
+	m := mail.NewMsg()
+	if err := m.From(e.from); err != nil {
+		return fmt.Errorf("failed to set from address: %w", err)
+	}
+
+	if err := m.To(e.to[0]); err != nil {
+		return fmt.Errorf("failed to set recipient: %w", err)
+	}
+
+	m.Subject("TLS Encryption Test")
+	m.SetBodyString(mail.TypeTextPlain, "This is a test message to verify TLS encryption.")
+
+	// Send test message
+	if err := e.client.Send(m); err != nil {
+		return fmt.Errorf("failed to send TLS test: %w", err)
+	}
+
+	return nil
+}
+
+// TestAllAuthTypes tests all supported authentication types
+func TestAllAuthTypes(ctx context.Context, cfg config.SMTPConfig, to []string) map[string]error {
+	results := make(map[string]error)
+	
+	authTypes := []string{
+		"plain", "login", "plain-noenc", "login-noenc",
+		"crammd5", "scram-sha-1", "scram-sha-256",
+		"xoauth2", "auto", "none",
+	}
+	
+	for _, authType := range authTypes {
+		testCfg := cfg
+		testCfg.AuthType = authType
+		
+		emailCfg := config.EmailConfig{
+			SMTP: testCfg,
+			To:   to,
+		}
+		
+		email, err := NewEmail(emailCfg, nil)
+		if err != nil {
+			results[authType] = fmt.Errorf("failed to create client: %w", err)
+			continue
+		}
+		
+		err = email.TestAuthConnection(ctx)
+		email.Close()
+		
+		results[authType] = err
+	}
+	
+	return results
+}
+
+// GetSupportedAuthTypes returns list of supported authentication types
+func GetSupportedAuthTypes() []string {
+	return []string{
+		"plain", "login", "plain-noenc", "login-noenc",
+		"crammd5", "scram-sha-1", "scram-sha-1-plus",
+		"scram-sha-256", "scram-sha-256-plus",
+		"xoauth2", "auto", "none",
+	}
+}
+
+// GetRecommendedAuthType returns recommended authentication type for a provider
+func GetRecommendedAuthType(provider string) string {
+	provider = strings.ToLower(provider)
+	
+	switch provider {
+	case "gmail", "google":
+		return "xoauth2"
+	case "outlook", "office365", "microsoft":
+		return "login"
+	case "yahoo":
+		return "plain"
+	case "icloud", "apple":
+		return "plain"
+	case "yandex":
+		return "plain"
+	case "mailru":
+		return "plain"
+	case "zoho":
+		return "plain"
+	case "sendgrid":
+		return "plain"
+	default:
+		return "plain"
+	}
 }
 
 // GetSMTPInfo returns information about the SMTP configuration
 func (e *Email) GetSMTPInfo() map[string]interface{} {
 	return map[string]interface{}{
-		"host":       e.smtpConfig.Host,
-		"port":       e.smtpConfig.Port,
-		"username":   e.smtpConfig.Username,
-		"from":       e.smtpConfig.From,
-		"to_count":   len(e.emailConfig.To),
-		"starttls":   e.smtpConfig.StartTLS,
+		"host":         e.smtpConfig.Host,
+		"port":         e.smtpConfig.Port,
+		"username":     e.smtpConfig.Username,
+		"from":         e.smtpConfig.From,
+		"to_count":     len(e.emailConfig.To),
+		"auth_type":    e.smtpConfig.AuthType,
+		"encryption":   e.smtpConfig.Encryption,
+		"timeout":      e.smtpConfig.Timeout,
+		"starttls":     e.smtpConfig.StartTLS,
+		"ssl_insecure": e.smtpConfig.SSLInsecure,
 	}
 }
 
 // Close closes the SMTP client connection
 func (e *Email) Close() error {
 	if e.client != nil {
-		return e.client.Quit()
+		return e.client.Close()
 	}
 	return nil
+}
+
+// GetProviderConfig returns pre-configured SMTP settings for popular email providers
+func GetProviderConfig(provider string) config.SMTPConfig {
+	provider = strings.ToLower(provider)
+	
+	switch provider {
+	case "gmail", "google":
+		return config.SMTPConfig{
+			Host:       "smtp.gmail.com",
+			Port:       587,
+			AuthType:   "xoauth2",
+			Encryption: "tls",
+			HELOHost:   "localhost",
+		}
+	case "outlook", "office365", "microsoft":
+		return config.SMTPConfig{
+			Host:       "smtp.office365.com",
+			Port:       587,
+			AuthType:   "login",
+			Encryption: "tls",
+			HELOHost:   "localhost",
+		}
+	case "yahoo":
+		return config.SMTPConfig{
+			Host:       "smtp.mail.yahoo.com",
+			Port:       587,
+			AuthType:   "plain",
+			Encryption: "tls",
+			HELOHost:   "localhost",
+		}
+	case "icloud", "apple":
+		return config.SMTPConfig{
+			Host:       "smtp.mail.me.com",
+			Port:       587,
+			AuthType:   "plain",
+			Encryption: "tls",
+			HELOHost:   "localhost",
+		}
+	case "yandex":
+		return config.SMTPConfig{
+			Host:       "smtp.yandex.ru",
+			Port:       465,
+			AuthType:   "plain",
+			Encryption: "ssl",
+			HELOHost:   "localhost",
+		}
+	case "mailru":
+		return config.SMTPConfig{
+			Host:       "smtp.mail.ru",
+			Port:       465,
+			AuthType:   "plain",
+			Encryption: "ssl",
+			HELOHost:   "localhost",
+		}
+	case "zoho":
+		return config.SMTPConfig{
+			Host:       "smtp.zoho.com",
+			Port:       587,
+			AuthType:   "plain",
+			Encryption: "tls",
+			HELOHost:   "localhost",
+		}
+	case "sendgrid":
+		return config.SMTPConfig{
+			Host:       "smtp.sendgrid.net",
+			Port:       587,
+			AuthType:   "plain",
+			Encryption: "tls",
+			HELOHost:   "localhost",
+		}
+	default:
+		return config.SMTPConfig{
+			Host:       "localhost",
+			Port:       25,
+			AuthType:   "plain",
+			Encryption: "none",
+			HELOHost:   "localhost",
+		}
+	}
+}
+
+// ValidateAndEnhanceConfig validates and enhances SMTP configuration with provider defaults
+func ValidateAndEnhanceConfig(cfg config.SMTPConfig) (config.SMTPConfig, error) {
+	// Validate basic configuration
+	if err := validateSMTPConfig(cfg); err != nil {
+		return cfg, fmt.Errorf("invalid SMTP configuration: %w", err)
+	}
+
+	// Set default HELO host if not specified
+	if cfg.HELOHost == "" {
+		cfg.HELOHost = "localhost"
+	}
+
+	// Set default local name if not specified
+	if cfg.LocalName == "" {
+		cfg.LocalName = cfg.HELOHost
+	}
+
+	return cfg, nil
 }

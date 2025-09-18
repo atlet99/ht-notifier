@@ -58,12 +58,58 @@ type EmailConfig struct {
 }
 
 type SMTPConfig struct {
-	Host        string `yaml:"host"`
-	Port        int    `yaml:"port"`
-	Username    string `yaml:"username"`
-	Password    string `yaml:"password"`
-	From        string `yaml:"from"`
-	StartTLS    bool   `yaml:"starttls"`
+	Host          string        `yaml:"host"`
+	Port          int           `yaml:"port"`
+	Username      string        `yaml:"username"`
+	Password      string        `yaml:"password"`
+	From          string        `yaml:"from"`
+	StartTLS      bool          `yaml:"starttls"`
+	Timeout       time.Duration `yaml:"timeout"`
+	AuthType      string        `yaml:"auth_type"` // "plain", "login", "crammd5", "scram", "xoauth2"
+	Encryption    string        `yaml:"encryption"` // "none", "ssl", "tls"
+	HELOHost      string        `yaml:"helo_host"`
+	LocalName     string        `yaml:"local_name"`
+	DisableHELO   bool          `yaml:"disable_helo"`
+	DisableSTARTTLS bool        `yaml:"disable_starttls"`
+	SSLInsecure   bool          `yaml:"ssl_insecure"`
+	SSNOCHECK     bool          `yaml:"ssl_nocertcheck"`
+	SSNoverify    bool          `yaml:"ssl_noverify"`
+	SSNoverifyHostname bool     `yaml:"ssl_noverify_hostname"`
+	SSNoverifyCA  bool          `yaml:"ssl_noverify_ca"`
+	SSNoverifyCRL bool          `yaml:"ssl_noverify_crl"`
+	SSNoverifyOCSP bool         `yaml:"ssl_noverify_ocsp"`
+	SSNoverifySignature bool    `yaml:"ssl_noverify_signature"`
+	SSNoverifyExtKeyUsage bool  `yaml:"ssl_noverify_ext_key_usage"`
+	SSNoverifyKeyUsage bool     `yaml:"ssl_noverify_key_usage"`
+	SSNoverifyServerName bool   `yaml:"ssl_noverify_server_name"`
+	SSNoverifySubject bool      `yaml:"ssl_noverify_subject"`
+	SSNoverifySANs bool         `yaml:"ssl_noverify_sans"`
+	SSNoverifyEmail bool        `yaml:"ssl_noverify_email"`
+	SSNoverifyIP bool           `yaml:"ssl_noverify_ip"`
+	SSNoverifyDNS bool          `yaml:"ssl_noverify_dns"`
+	SSNoverifyURIs bool         `yaml:"ssl_noverify_uris"`
+	SSNoverifyOtherNames bool   `yaml:"ssl_noverify_other_names"`
+	SSNoverifyAllNames bool     `yaml:"ssl_noverify_all_names"`
+	SSNoverifyAnyName bool      `yaml:"ssl_noverify_any_name"`
+	SSNoverifyNoNames bool      `yaml:"ssl_noverify_no_names"`
+	SSNoverifyNoSANs bool       `yaml:"ssl_noverify_no_sans"`
+	SSNoverifyNoEmail bool      `yaml:"ssl_noverify_no_email"`
+	SSNoverifyNoIP bool         `yaml:"ssl_noverify_no_ip"`
+	SSNoverifyNoDNS bool        `yaml:"ssl_noverify_no_dns"`
+	SSNoverifyNoURIs bool       `yaml:"ssl_noverify_no_uris"`
+	SSNoverifyNoOtherNames bool `yaml:"ssl_noverify_no_other_names"`
+	SSNoverifyNoAllNames bool   `yaml:"ssl_noverify_no_all_names"`
+	SSNoverifyNoAnyName bool    `yaml:"ssl_noverify_no_any_name"`
+	SSNoverifyNoNoNames bool    `yaml:"ssl_noverify_no_no_names"`
+	SSNoverifyNoNoSANs bool     `yaml:"ssl_noverify_no_no_sans"`
+	SSNoverifyNoNoEmail bool    `yaml:"ssl_noverify_no_no_email"`
+	SSNoverifyNoNoIP bool       `yaml:"ssl_noverify_no_no_ip"`
+	SSNoverifyNoNoDNS bool      `yaml:"ssl_noverify_no_no_dns"`
+	SSNoverifyNoNoURIs bool     `yaml:"ssl_noverify_no_no_uris"`
+	SSNoverifyNoNoOtherNames bool `yaml:"ssl_noverify_no_no_other_names"`
+	SSNoverifyNoNoAllNames bool `yaml:"ssl_noverify_no_no_all_names"`
+	SSNoverifyNoNoAnyName bool  `yaml:"ssl_noverify_no_no_any_name"`
+	SSNoverifyNoNoNoNames bool  `yaml:"ssl_noverify_no_no_no_names"`
 }
 
 type ProcessingConfig struct {
@@ -135,6 +181,14 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("notify.email.enabled", false)
 	v.SetDefault("notify.email.smtp.port", 587)
 	v.SetDefault("notify.email.smtp.starttls", true)
+	v.SetDefault("notify.email.smtp.timeout", "30s")
+	v.SetDefault("notify.email.smtp.auth_type", "plain")
+	v.SetDefault("notify.email.smtp.encryption", "tls")
+	v.SetDefault("notify.email.smtp.helo_host", "")
+	v.SetDefault("notify.email.smtp.local_name", "")
+	v.SetDefault("notify.email.smtp.disable_helo", false)
+	v.SetDefault("notify.email.smtp.disable_starttls", false)
+	v.SetDefault("notify.email.smtp.ssl_insecure", false)
 	
 	v.SetDefault("processing.enrich_via_harbor_api", true)
 	v.SetDefault("processing.max_concurrency", 8)
@@ -254,6 +308,46 @@ func (c *Config) validateNotifyConfig() error {
 		}
 		if len(c.Notify.Email.To) == 0 {
 			return errors.New("at least one email recipient is required when email is enabled")
+		}
+		
+		// Validate auth type
+		validAuthTypes := map[string]bool{
+			"plain":         true,
+			"login":         true,
+			"plain-noenc":   true,
+			"login-noenc":   true,
+			"crammd5":       true,
+			"scram":         true,
+			"scram-sha-1":   true,
+			"scram-sha1":    true,
+			"scramsha1":     true,
+			"scram-sha-256": true,
+			"scram-sha256":  true,
+			"scramsha256":   true,
+			"xoauth2":       true,
+			"oauth2":        true,
+			"auto":          true,
+			"autodiscover":  true,
+			"none":          true,
+			"noauth":        true,
+		}
+		if !validAuthTypes[c.Notify.Email.SMTP.AuthType] {
+			return errors.New("invalid SMTP auth type, must be one of: plain, login, plain-noenc, login-noenc, crammd5, scram, scram-sha-1, scram-sha-256, xoauth2, auto, none")
+		}
+		
+		// Validate encryption type
+		validEncryptionTypes := map[string]bool{
+			"none": true,
+			"ssl":  true,
+			"tls":  true,
+		}
+		if !validEncryptionTypes[c.Notify.Email.SMTP.Encryption] {
+			return errors.New("invalid SMTP encryption type, must be one of: none, ssl, tls")
+		}
+		
+		// Validate timeout
+		if c.Notify.Email.SMTP.Timeout <= 0 {
+			return errors.New("SMTP timeout must be positive")
 		}
 	}
 
