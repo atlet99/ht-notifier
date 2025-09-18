@@ -5,8 +5,12 @@ import (
 	"fmt"
 	"net"
 	"net/url"
+	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
+	"github.com/joho/godotenv"
 	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
 )
@@ -135,6 +139,7 @@ type LogConfig struct {
 	Format string `yaml:"format"`
 }
 
+// Load loads configuration from multiple sources with .env support
 func Load(configPath string) (*Config, error) {
 	v := viper.New()
 	
@@ -143,6 +148,14 @@ func Load(configPath string) (*Config, error) {
 	
 	// Bind flags
 	bindFlags(v)
+	
+	// Load .env file if it exists
+	envPath := getEnvPath()
+	if envPath != "" {
+		if err := loadEnvFile(v, envPath); err != nil {
+			return nil, fmt.Errorf("failed to load .env file: %w", err)
+		}
+	}
 	
 	// Read config file
 	if configPath != "" {
@@ -164,22 +177,114 @@ func Load(configPath string) (*Config, error) {
 	return &cfg, nil
 }
 
+// getEnvPath returns the path to the .env file
+func getEnvPath() string {
+	// Check for .env file in current directory
+	if _, err := os.Stat(".env"); err == nil {
+		return ".env"
+	}
+	
+	// Check for .env file in config directory
+	if configDir := getConfigDir(); configDir != "" {
+		if envPath := filepath.Join(configDir, ".env"); fileExists(envPath) {
+			return envPath
+		}
+	}
+	
+	// Check for environment variable specifying .env path
+	if envPath := os.Getenv("ENV_FILE"); envPath != "" {
+		if fileExists(envPath) {
+			return envPath
+		}
+	}
+	
+	return ""
+}
+
+// getConfigDir returns the configuration directory path
+func getConfigDir() string {
+	// Check for CONFIG_DIR environment variable
+	if configDir := os.Getenv("CONFIG_DIR"); configDir != "" {
+		return configDir
+	}
+	
+	// Check for common config directories
+	dirs := []string{
+		"/etc/notifier",
+		"$HOME/.config/notifier",
+		"$HOME/.notifier",
+		"./config",
+	}
+	
+	for _, dir := range dirs {
+		if strings.HasPrefix(dir, "$HOME") {
+			home, err := os.UserHomeDir()
+			if err != nil {
+				continue
+			}
+			dir = strings.Replace(dir, "$HOME", home, 1)
+		}
+		
+		if dirExists(dir) {
+			return dir
+		}
+	}
+	
+	return ""
+}
+
+// loadEnvFile loads environment variables from a .env file
+func loadEnvFile(v *viper.Viper, envPath string) error {
+	// Load .env file using godotenv
+	if err := godotenv.Load(envPath); err != nil {
+		return fmt.Errorf("failed to load .env file %s: %w", envPath, err)
+	}
+	
+	// Also read the .env file with viper for better integration
+	v.SetConfigFile(envPath)
+	if err := v.ReadInConfig(); err != nil {
+		return fmt.Errorf("failed to read .env file with viper: %w", err)
+	}
+	
+	return nil
+}
+
+// fileExists checks if a file exists
+func fileExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir()
+}
+
+// dirExists checks if a directory exists
+func dirExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
+}
+
 func setDefaults(v *viper.Viper) {
+	// Server configuration
 	v.SetDefault("server.addr", ":8080")
 	v.SetDefault("server.base_path", "/")
 	v.SetDefault("server.read_header_timeout", "5s")
 	v.SetDefault("server.shutdown_timeout", "10s")
 	v.SetDefault("server.enable_pprof", false)
 	
+	// Harbor configuration
 	v.SetDefault("harbor.base_url", "https://harbor.local")
 	v.SetDefault("harbor.timeout", "30s")
 	
+	// Telegram notification configuration
 	v.SetDefault("notify.telegram.enabled", false)
 	v.SetDefault("notify.telegram.timeout", "5s")
 	v.SetDefault("notify.telegram.rate_per_minute", 30)
 	
+	// Email notification configuration
 	v.SetDefault("notify.email.enabled", false)
+	v.SetDefault("notify.email.smtp.host", "")
 	v.SetDefault("notify.email.smtp.port", 587)
+	v.SetDefault("notify.email.smtp.username", "")
+	v.SetDefault("notify.email.smtp.password", "")
+	v.SetDefault("notify.email.smtp.from", "")
 	v.SetDefault("notify.email.smtp.starttls", true)
 	v.SetDefault("notify.email.smtp.timeout", "30s")
 	v.SetDefault("notify.email.smtp.auth_type", "plain")
@@ -189,7 +294,47 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("notify.email.smtp.disable_helo", false)
 	v.SetDefault("notify.email.smtp.disable_starttls", false)
 	v.SetDefault("notify.email.smtp.ssl_insecure", false)
+	v.SetDefault("notify.email.smtp.ssl_nocertcheck", false)
+	v.SetDefault("notify.email.smtp.ssl_noverify", false)
+	v.SetDefault("notify.email.smtp.ssl_noverify_hostname", false)
+	v.SetDefault("notify.email.smtp.ssl_noverify_ca", false)
+	v.SetDefault("notify.email.smtp.ssl_noverify_crl", false)
+	v.SetDefault("notify.email.smtp.ssl_noverify_ocsp", false)
+	v.SetDefault("notify.email.smtp.ssl_noverify_signature", false)
+	v.SetDefault("notify.email.smtp.ssl_noverify_ext_key_usage", false)
+	v.SetDefault("notify.email.smtp.ssl_noverify_key_usage", false)
+	v.SetDefault("notify.email.smtp.ssl_noverify_server_name", false)
+	v.SetDefault("notify.email.smtp.ssl_noverify_subject", false)
+	v.SetDefault("notify.email.smtp.ssl_noverify_sans", false)
+	v.SetDefault("notify.email.smtp.ssl_noverify_email", false)
+	v.SetDefault("notify.email.smtp.ssl_noverify_ip", false)
+	v.SetDefault("notify.email.smtp.ssl_noverify_dns", false)
+	v.SetDefault("notify.email.smtp.ssl_noverify_uris", false)
+	v.SetDefault("notify.email.smtp.ssl_noverify_other_names", false)
+	v.SetDefault("notify.email.smtp.ssl_noverify_all_names", false)
+	v.SetDefault("notify.email.smtp.ssl_noverify_any_name", false)
+	v.SetDefault("notify.email.smtp.ssl_noverify_no_names", false)
+	v.SetDefault("notify.email.smtp.ssl_noverify_no_sans", false)
+	v.SetDefault("notify.email.smtp.ssl_noverify_no_email", false)
+	v.SetDefault("notify.email.smtp.ssl_noverify_no_ip", false)
+	v.SetDefault("notify.email.smtp.ssl_noverify_no_dns", false)
+	v.SetDefault("notify.email.smtp.ssl_noverify_no_uris", false)
+	v.SetDefault("notify.email.smtp.ssl_noverify_no_other_names", false)
+	v.SetDefault("notify.email.smtp.ssl_noverify_no_all_names", false)
+	v.SetDefault("notify.email.smtp.ssl_noverify_no_any_name", false)
+	v.SetDefault("notify.email.smtp.ssl_noverify_no_no_names", false)
+	v.SetDefault("notify.email.smtp.ssl_noverify_no_no_sans", false)
+	v.SetDefault("notify.email.smtp.ssl_noverify_no_no_email", false)
+	v.SetDefault("notify.email.smtp.ssl_noverify_no_no_ip", false)
+	v.SetDefault("notify.email.smtp.ssl_noverify_no_no_dns", false)
+	v.SetDefault("notify.email.smtp.ssl_noverify_no_no_uris", false)
+	v.SetDefault("notify.email.smtp.ssl_noverify_no_no_other_names", false)
+	v.SetDefault("notify.email.smtp.ssl_noverify_no_no_all_names", false)
+	v.SetDefault("notify.email.smtp.ssl_noverify_no_no_any_name", false)
+	v.SetDefault("notify.email.smtp.ssl_noverify_no_no_no_names", false)
+	v.SetDefault("notify.email.subject_prefix", "[Harbor Alert]")
 	
+	// Processing configuration
 	v.SetDefault("processing.enrich_via_harbor_api", true)
 	v.SetDefault("processing.max_concurrency", 8)
 	v.SetDefault("processing.max_queue", 1024)
@@ -197,6 +342,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("processing.retry.initial_backoff", "1s")
 	v.SetDefault("processing.retry.max_backoff", "2m")
 	
+	// Observability configuration
 	v.SetDefault("observability.metrics_addr", ":9090")
 	v.SetDefault("observability.log.level", "info")
 	v.SetDefault("observability.log.format", "json")

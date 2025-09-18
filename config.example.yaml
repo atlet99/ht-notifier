@@ -1,0 +1,327 @@
+# Harbor Notifier Configuration Example
+# This file shows various configurations for different email providers
+
+# Server Configuration
+server:
+  addr: ":8080"
+  base_path: "/"
+  read_header_timeout: "5s"
+  shutdown_timeout: "10s"
+  enable_pprof: false
+
+# Harbor Configuration
+harbor:
+  base_url: "https://harbor.local"
+  username: "admin"
+  password: "harbor_password"
+  insecure_skip_verify: false
+  timeout: "30s"
+
+# Notification Configuration
+notify:
+  # Telegram Configuration (optional)
+  telegram:
+    enabled: false
+    bot_token: "your_telegram_bot_token"
+    chat_id: "your_chat_id"
+    timeout: "5s"
+    rate_per_minute: 30
+
+  # Email Configuration
+  email:
+    enabled: true
+    subject_prefix: "[Harbor Alert]"
+    smtp:
+      # Basic SMTP Settings
+      host: "smtp.gmail.com"
+      port: 587
+      username: "your_email@gmail.com"
+      password: "your_app_password"
+      from: "your_email@gmail.com"
+      starttls: true
+      timeout: "30s"
+      auth_type: "xoauth2"
+      encryption: "tls"
+      
+      # Advanced SMTP Settings
+      helo_host: ""
+      local_name: ""
+      disable_helo: false
+      disable_starttls: false
+      ssl_insecure: false
+      ssl_nocertcheck: false
+      ssl_noverify: false
+      ssl_noverify_hostname: false
+      ssl_noverify_ca: false
+      ssl_noverify_crl: false
+      ssl_noverify_ocsp: false
+      ssl_noverify_signature: false
+      ssl_noverify_ext_key_usage: false
+      ssl_noverify_key_usage: false
+      ssl_noverify_server_name: false
+      ssl_noverify_subject: false
+      ssl_noverify_sans: false
+      ssl_noverify_email: false
+      ssl_noverify_ip: false
+      ssl_noverify_dns: false
+      ssl_noverify_uris: false
+      ssl_noverify_other_names: false
+      ssl_noverify_all_names: false
+      ssl_noverify_any_name: false
+      ssl_noverify_no_names: false
+      ssl_noverify_no_sans: false
+      ssl_noverify_no_email: false
+      ssl_noverify_no_ip: false
+      ssl_noverify_no_dns: false
+      ssl_noverify_no_uris: false
+      ssl_noverify_no_other_names: false
+      ssl_noverify_no_all_names: false
+      ssl_noverify_no_any_name: false
+      ssl_noverify_no_no_names: false
+      ssl_noverify_no_no_sans: false
+      ssl_noverify_no_no_email: false
+      ssl_noverify_no_no_ip: false
+      ssl_noverify_no_no_dns: false
+      ssl_noverify_no_no_uris: false
+      ssl_noverify_no_no_other_names: false
+      ssl_noverify_no_no_all_names: false
+      ssl_noverify_no_no_any_name: false
+      ssl_noverify_no_no_no_names: false
+    to:
+      - "admin@example.com"
+      - "security@example.com"
+      - "devops@example.com"
+
+# Processing Configuration
+processing:
+  enrich_via_harbor_api: true
+  max_concurrency: 8
+  max_queue: 1024
+  retry:
+    max_attempts: 8
+    initial_backoff: "1s"
+    max_backoff: "2m"
+
+# Observability Configuration
+observability:
+  metrics_addr: ":9090"
+  log:
+    level: "info"
+    format: "json"
+
+---
+
+# Example: Gmail Configuration
+# Copy this section and modify as needed
+
+notify:
+  email:
+    enabled: true
+    subject_prefix: "[Gmail Alert]"
+    smtp:
+      host: "smtp.gmail.com"
+      port: 587
+      username: "your_email@gmail.com"
+      password: "your_app_password"  # Use App Password for Gmail
+      from: "your_email@gmail.com"
+      starttls: true
+      timeout: "30s"
+      auth_type: "xoauth2"  # Recommended for Gmail
+      encryption: "tls"
+    to:
+      - "team@example.com"
+
+---
+
+# Example: Microsoft Office 365 Configuration
+
+notify:
+  email:
+    enabled: true
+    subject_prefix: "[Office 365 Alert]"
+    smtp:
+      host: "smtp.office365.com"
+      port: 587
+      username: "your_email@company.com"
+      password: "your_password"
+      from: "your_email@company.com"
+      starttls: true
+      timeout: "30s"
+      auth_type: "login"  # Recommended for Office 365
+      encryption: "tls"
+    to:
+      - "security@company.com"
+
+---
+
+# Example: Yahoo Mail Configuration
+
+notify:
+  email:
+    enabled: true
+    subject_prefix: "[Yahoo Alert]"
+    smtp:
+      host: "smtp.mail.yahoo.com"
+      port: 587
+      username: "your_email@yahoo.com"
+      password: "your_password"
+      from: "your_email@yahoo.com"
+      starttls: true
+      timeout: "30s"
+      auth_type: "plain"
+      encryption: "tls"
+    to:
+      - "admin@example.com"
+
+---
+
+# Example: iCloud/Apple Configuration
+
+notify:
+  email:
+    enabled: true
+    subject_prefix: "[iCloud Alert]"
+    smtp:
+      host: "smtp.mail.me.com"
+      port: 587
+      username: "your_email@icloud.com"
+      password: "your_password"
+      from: "your_email@icloud.com"
+      starttls: true
+      timeout: "30s"
+      auth_type: "plain"
+      encryption: "tls"
+    to:
+      - "admin@example.com"
+
+---
+
+# Example: Yandex Configuration
+
+notify:
+  email:
+    enabled: true
+    subject_prefix: "[Yandex Alert]"
+    smtp:
+      host: "smtp.yandex.ru"
+      port: 465
+      username: "your_email@yandex.ru"
+      password: "your_password"
+      from: "your_email@yandex.ru"
+      starttls: false
+      timeout: "30s"
+      auth_type: "plain"
+      encryption: "ssl"  # Yandex uses SSL on port 465
+    to:
+      - "admin@example.com"
+
+---
+
+# Example: Zoho Configuration
+
+notify:
+  email:
+    enabled: true
+    subject_prefix: "[Zoho Alert]"
+    smtp:
+      host: "smtp.zoho.com"
+      port: 587
+      username: "your_email@zoho.com"
+      password: "your_password"
+      from: "your_email@zoho.com"
+      starttls: true
+      timeout: "30s"
+      auth_type: "plain"
+      encryption: "tls"
+    to:
+      - "admin@example.com"
+
+---
+
+# Example: SendGrid Configuration
+
+notify:
+  email:
+    enabled: true
+    subject_prefix: "[SendGrid Alert]"
+    smtp:
+      host: "smtp.sendgrid.net"
+      port: 587
+      username: "apikey"
+      password: "your_sendgrid_api_key"
+      from: "your_email@example.com"
+      starttls: true
+      timeout: "30s"
+      auth_type: "plain"
+      encryption: "tls"
+    to:
+      - "admin@example.com"
+
+---
+
+# Example: Custom SMTP Server with Advanced Settings
+
+notify:
+  email:
+    enabled: true
+    subject_prefix: "[Custom SMTP Alert]"
+    smtp:
+      host: "smtp.custom.com"
+      port: 25
+      username: "user@custom.com"
+      password: "secure_password"
+      from: "alerts@custom.com"
+      starttls: false
+      timeout: "30s"
+      auth_type: "plain"
+      encryption: "none"
+      
+      # Advanced SSL/TLS Settings
+      ssl_insecure: false
+      ssl_nocertcheck: false
+      ssl_noverify: false
+      ssl_noverify_hostname: false
+      ssl_noverify_ca: false
+      ssl_noverify_crl: false
+      ssl_noverify_ocsp: false
+      ssl_noverify_signature: false
+      ssl_noverify_ext_key_usage: false
+      ssl_noverify_key_usage: false
+      ssl_noverify_server_name: false
+      ssl_noverify_subject: false
+      ssl_noverify_sans: false
+      ssl_noverify_email: false
+      ssl_noverify_ip: false
+      ssl_noverify_dns: false
+      ssl_noverify_uris: false
+      ssl_noverify_other_names: false
+      ssl_noverify_all_names: false
+      ssl_noverify_any_name: false
+      ssl_noverify_no_names: false
+      ssl_noverify_no_sans: false
+      ssl_noverify_no_email: false
+      ssl_noverify_no_ip: false
+      ssl_noverify_no_dns: false
+      ssl_noverify_no_uris: false
+      ssl_noverify_no_other_names: false
+      ssl_noverify_no_all_names: false
+      ssl_noverify_no_any_name: false
+      ssl_noverify_no_no_names: false
+      ssl_noverify_no_no_sans: false
+      ssl_noverify_no_no_email: false
+      ssl_noverify_no_no_ip: false
+      ssl_noverify_no_no_dns: false
+      ssl_noverify_no_no_uris: false
+      ssl_noverify_no_no_other_names: false
+      ssl_noverify_no_no_all_names: false
+      ssl_noverify_no_no_any_name: false
+      ssl_noverify_no_no_no_names: false
+      
+      # HELO/EHLO Settings
+      helo_host: "mailserver.custom.com"
+      local_name: "harbor-notifier"
+      disable_helo: false
+      disable_starttls: false
+    to:
+      - "security@example.com"
+      - "devops@example.com"
