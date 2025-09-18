@@ -4,19 +4,22 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/atlet99/ht-notifier/internal/notif"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 )
 
 // Handler holds the HTTP handler dependencies
 type Handler struct {
-	router *chi.Mux
+	router    *chi.Mux
+	notifiers []notif.Notifier
 }
 
 // NewHandler creates a new HTTP handler with all routes and middlewares
-func NewHandler(cfg interface{}, logger interface{}, metrics interface{}) *Handler {
+func NewHandler(cfg interface{}, logger interface{}, metrics interface{}, notifiers []notif.Notifier) *Handler {
 	h := &Handler{
-		router: chi.NewRouter(),
+		router:    chi.NewRouter(),
+		notifiers: notifiers,
 	}
 
 	// Apply middlewares
@@ -93,6 +96,28 @@ func (h *Handler) metrics(w http.ResponseWriter, r *http.Request) {
 
 // harborWebhook handles Harbor webhook requests
 func (h *Handler) harborWebhook(w http.ResponseWriter, r *http.Request) {
+	// Create notification message from webhook data
+	msg := notif.Message{
+		Title:  "Harbor Scan Alert",
+		Body:   "New scan results available",
+		Link:   "View in Harbor",
+		Labels: map[string]string{"severity": "medium"},
+		Metadata: map[string]interface{}{
+			"source": "harbor-webhook",
+			"time":   time.Now().UTC(),
+		},
+	}
+
+	// Send notification to all configured notifiers
+	ctx := r.Context()
+	for _, notifier := range h.notifiers {
+		if err := notifier.Send(ctx, msg); err != nil {
+			// Log error but continue with other notifiers
+			// TODO: Add proper logging
+			continue
+		}
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)
 	w.Write([]byte(`{"status":"accepted"}`))

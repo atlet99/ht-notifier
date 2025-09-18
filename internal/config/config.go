@@ -44,6 +44,7 @@ type HarborConfig struct {
 type NotifyConfig struct {
 	Telegram TelegramConfig `yaml:"telegram"`
 	Email    EmailConfig    `yaml:"email"`
+	Slack    SlackConfig    `yaml:"slack"`
 }
 
 type TelegramConfig struct {
@@ -75,6 +76,23 @@ type MessageFormatConfig struct {
 	CustomPrefix      string   `yaml:"custom_prefix"`
 	CustomSuffix      string   `yaml:"custom_suffix"`
 	SeverityColors    SeverityColors `yaml:"severity_colors"`
+}
+
+type SlackConfig struct {
+	Enabled          bool          `yaml:"enabled"`
+	Token            string        `yaml:"token"`
+	Channel          string        `yaml:"channel"`
+	Timeout          time.Duration `yaml:"timeout"`
+	RatePerMinute    int           `yaml:"rate_per_minute"`
+	Debug            bool          `yaml:"debug"`
+	MessageFormat    MessageFormatConfig `yaml:"message_format"`
+	Username         string        `yaml:"username"`
+	IconEmoji        string        `yaml:"icon_emoji"`
+	IconURL          string        `yaml:"icon_url"`
+	LinkNames        bool          `yaml:"link_names"`
+	UnfurlLinks      bool          `yaml:"unfurl_links"`
+	UnfurlMedia      bool          `yaml:"unfurl_media"`
+	Markdown         bool          `yaml:"markdown"`
 }
 
 type SeverityColors struct {
@@ -334,6 +352,35 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("notify.telegram.message_format.severity_colors.low", "🟢")
 	v.SetDefault("notify.telegram.message_format.severity_colors.unknown", "⚪")
 	
+	// Slack notification configuration
+	v.SetDefault("notify.slack.enabled", false)
+	v.SetDefault("notify.slack.timeout", "5s")
+	v.SetDefault("notify.slack.rate_per_minute", 30)
+	v.SetDefault("notify.slack.debug", false)
+	v.SetDefault("notify.slack.username", "Harbor Notifier")
+	v.SetDefault("notify.slack.icon_emoji", ":warning:")
+	v.SetDefault("notify.slack.link_names", false)
+	v.SetDefault("notify.slack.unfurl_links", false)
+	v.SetDefault("notify.slack.unfurl_media", false)
+	v.SetDefault("notify.slack.markdown", true)
+	
+	// Slack message format configuration
+	v.SetDefault("notify.slack.message_format.escape_markdown", true)
+	v.SetDefault("notify.slack.message_format.disable_web_preview", false)
+	v.SetDefault("notify.slack.message_format.enable_html", false)
+	v.SetDefault("notify.slack.message_format.show_timestamp", true)
+	v.SetDefault("notify.slack.message_format.include_severity", true)
+	v.SetDefault("notify.slack.message_format.max_message_length", 4000)
+	v.SetDefault("notify.slack.message_format.custom_prefix", "")
+	v.SetDefault("notify.slack.message_format.custom_suffix", "")
+	
+	// Slack severity colors
+	v.SetDefault("notify.slack.message_format.severity_colors.critical", "🔴")
+	v.SetDefault("notify.slack.message_format.severity_colors.high", "🟠")
+	v.SetDefault("notify.slack.message_format.severity_colors.medium", "🟡")
+	v.SetDefault("notify.slack.message_format.severity_colors.low", "🟢")
+	v.SetDefault("notify.slack.message_format.severity_colors.unknown", "⚪")
+	
 	// Email notification configuration
 	v.SetDefault("notify.email.enabled", false)
 	v.SetDefault("notify.email.smtp.host", "")
@@ -504,6 +551,9 @@ func (c *Config) validateNotifyConfig() error {
 			if c.Notify.Telegram.Webhook.MaxConnections <= 0 {
 				return errors.New("Telegram webhook max connections must be positive")
 			}
+			if c.Notify.Telegram.Webhook.MaxConnections > 100 {
+				return errors.New("Telegram webhook max connections cannot exceed 100")
+			}
 		}
 		
 		// Validate message format configuration
@@ -512,6 +562,20 @@ func (c *Config) validateNotifyConfig() error {
 		}
 		if c.Notify.Telegram.MessageFormat.MaxMessageLength > 4096 {
 			return errors.New("Telegram message format max message length cannot exceed 4096 characters")
+		}
+		
+		// Validate severity colors
+		if c.Notify.Telegram.MessageFormat.SeverityColors.Critical == "" {
+			return errors.New("Telegram severity color for critical issues is required")
+		}
+		if c.Notify.Telegram.MessageFormat.SeverityColors.High == "" {
+			return errors.New("Telegram severity color for high issues is required")
+		}
+		if c.Notify.Telegram.MessageFormat.SeverityColors.Medium == "" {
+			return errors.New("Telegram severity color for medium issues is required")
+		}
+		if c.Notify.Telegram.MessageFormat.SeverityColors.Low == "" {
+			return errors.New("Telegram severity color for low issues is required")
 		}
 	}
 
@@ -602,6 +666,44 @@ func (c *Config) validateProcessingConfig() error {
 		return errors.New("max backoff must be greater than or equal to initial backoff")
 	}
 
+	// Validate Slack configuration
+	if c.Notify.Slack.Enabled {
+		if c.Notify.Slack.Token == "" {
+			return errors.New("Slack token is required when Slack is enabled")
+		}
+		if c.Notify.Slack.Channel == "" {
+			return errors.New("Slack channel is required when Slack is enabled")
+		}
+		if c.Notify.Slack.RatePerMinute <= 0 {
+			return errors.New("Slack rate per minute must be positive")
+		}
+		if c.Notify.Slack.Timeout <= 0 {
+			return errors.New("Slack timeout must be positive")
+		}
+		
+		// Validate message format configuration
+		if c.Notify.Slack.MessageFormat.MaxMessageLength <= 0 {
+			return errors.New("Slack message format max message length must be positive")
+		}
+		if c.Notify.Slack.MessageFormat.MaxMessageLength > 4000 {
+			return errors.New("Slack message format max message length cannot exceed 4000 characters")
+		}
+		
+		// Validate severity colors
+		if c.Notify.Slack.MessageFormat.SeverityColors.Critical == "" {
+			return errors.New("Slack severity color for critical issues is required")
+		}
+		if c.Notify.Slack.MessageFormat.SeverityColors.High == "" {
+			return errors.New("Slack severity color for high issues is required")
+		}
+		if c.Notify.Slack.MessageFormat.SeverityColors.Medium == "" {
+			return errors.New("Slack severity color for medium issues is required")
+		}
+		if c.Notify.Slack.MessageFormat.SeverityColors.Low == "" {
+			return errors.New("Slack severity color for low issues is required")
+		}
+	}
+
 	return nil
 }
 
@@ -636,7 +738,7 @@ func (c *Config) validateObservabilityConfig() error {
 
 // IsNotificationEnabled returns true if at least one notification target is enabled
 func (c *Config) IsNotificationEnabled() bool {
-	return c.Notify.Telegram.Enabled || c.Notify.Email.Enabled
+	return c.Notify.Telegram.Enabled || c.Notify.Email.Enabled || c.Notify.Slack.Enabled
 }
 
 // GetEnabledNotifiers returns a list of enabled notifier types
@@ -647,6 +749,9 @@ func (c *Config) GetEnabledNotifiers() []string {
 	}
 	if c.Notify.Email.Enabled {
 		notifiers = append(notifiers, "email")
+	}
+	if c.Notify.Slack.Enabled {
+		notifiers = append(notifiers, "slack")
 	}
 	return notifiers
 }

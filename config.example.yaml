@@ -27,6 +27,40 @@ notify:
     timeout: "5s"
     rate_per_minute: 30
 
+  # Slack Configuration (optional)
+  slack:
+    enabled: false
+    token: "xoxb-your-slack-bot-token"
+    channel: "#alerts"
+    timeout: "5s"
+    rate_per_minute: 30
+    debug: false
+    username: "Harbor Notifier"
+    icon_emoji: ":warning:"
+    link_names: false
+    unfurl_links: false
+    unfurl_media: false
+    markdown: true
+    
+    # Message Format Configuration
+    message_format:
+      escape_markdown: true
+      disable_web_preview: false
+      enable_html: false
+      show_timestamp: true
+      include_severity: true
+      max_message_length: 4000
+      custom_prefix: ""
+      custom_suffix: ""
+      
+      # Severity Colors Configuration
+      severity_colors:
+        critical: "🔴"
+        high: "🟠"
+        medium: "🟡"
+        low: "🟢"
+        unknown: "⚪"
+
   # Email Configuration
   email:
     enabled: true
@@ -325,3 +359,111 @@ notify:
     to:
       - "security@example.com"
       - "devops@example.com"
+
+---
+
+# Example: Slack Configuration with Webhook Integration
+
+notify:
+  slack:
+    enabled: true
+    token: "xoxb-your-slack-bot-token"
+    channel: "#security-alerts"
+    timeout: "5s"
+    rate_per_minute: 60
+    debug: true
+    username: "Harbor Security Bot"
+    icon_emoji: ":shield:"
+    link_names: true
+    unfurl_links: true
+    unfurl_media: true
+    markdown: true
+    
+    message_format:
+      escape_markdown: false
+      disable_web_preview: false
+      enable_html: true
+      show_timestamp: true
+      include_severity: true
+      max_message_length: 3000
+      custom_prefix: "🚨 [SECURITY]"
+      custom_suffix: "Please review immediately"
+      
+      severity_colors:
+        critical: "🔴"
+        high: "🟠"
+        medium: "🟡"
+        low: "🟢"
+        unknown: "⚪"
+
+---
+
+# Example: Slack Configuration for Development Team
+
+notify:
+  slack:
+    enabled: true
+    token: "xoxb-dev-team-bot-token"
+    channel: "#dev-alerts"
+    timeout: "3s"
+    rate_per_minute: 120
+    debug: false
+    username: "Harbor Dev Notifier"
+    icon_emoji: ":information_source:"
+    link_names: false
+    unfurl_links: false
+    unfurl_media: false
+    markdown: true
+    
+    message_format:
+      escape_markdown: true
+      disable_web_preview: true
+      enable_html: false
+      show_timestamp: false
+      include_severity: true
+      max_message_length: 2000
+      custom_prefix: ""
+      custom_suffix: ":thumbsup:"
+      
+      severity_colors:
+        critical: "💀"
+        high: "😱"
+        medium: "😟"
+        low: "😐"
+        unknown: "❓"
+
+---
+
+# Example: Slack Configuration with Custom Icon URL
+
+notify:
+  slack:
+    enabled: true
+    token: "xoxb-custom-icon-bot-token"
+    channel: "#general"
+    timeout: "5s"
+    rate_per_minute: 30
+    debug: false
+    username: "Harbor Enterprise"
+    icon_url: "https://example.com/harbor-logo.png"
+    link_names: false
+    unfurl_links: true
+    unfurl_media: true
+    markdown: true
+    
+    message_format:
+      escape_markdown: true
+      disable_web_preview: false
+      enable_html: false
+      show_timestamp: true
+      include_severity: true
+      max_message_length: 4000
+      custom_prefix: "[🏴‍☠️ HARBOR]"
+      custom_suffix: ""
+      
+      severity_colors:
+        critical: "🔴"
+        high: "🟠"
+        medium: "🟡"
+        low: "🟢"
+        unknown: "⚪"

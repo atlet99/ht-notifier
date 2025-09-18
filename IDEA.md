@@ -6,40 +6,7 @@ A production-ready Go service that receives Harbor registry webhook events (SCAN
 
 ## High-Level Architecture
 
-```
-┌───────────────────────────────────────────────────────────────────────┐
-│                          Harbor Registry                              │
-│  (Trivy built-in scanner)                                             │
-│                                                                       │
-│  Events:  SCANNING_COMPLETED / SCANNING_FAILED   ────────────────▶    │
-└───────────────────────────────────────────────────────────────────────┘
-                                         HTTPS (Webhook + HMAC/secret)
-                                         IP allowlist (opt)
-                                         mTLS (opt)
-
-┌───────────────────────────────────────────────────────────────────────┐
-│                        go-harbor-notifier (this service)              │
-│                                                                       │
-│  /webhook/harbor  ──▶  validate  ──▶  dedupe/idempotency             │
-│                               │                  │                    │
-│                               │                  ├──▶ queue (chan +   │
-│                               │                       durable sink)   │
-│                               ▼                                       │
-│                         enrich (Harbor API)                           │
-│                               │                                       │
-│                    format (templating, i18n)                          │
-│                               │                                       │
-│   ┌───────────────┬──────────────┬──────────────┐                     │
-│   ▼               ▼              ▼              ▼                     │
-│  Telegram       Email          Webhook pass-thru  (future: Slack,     │
-│  sender         (SMTP)         /Kafka/SQS)         MS Teams, etc.)     │
-│   ▲               ▲              ▲                                     │
-│   └──── retry/backoff (exponential, DLQ), per-target rate limits ─────┘
-│                                                                       │
-│      Observability: Prometheus (/metrics), structured logs, traces     │
-│      SRE: /healthz, /readyz, pprof, SIGHUP reload                      │
-└───────────────────────────────────────────────────────────────────────┘
-```
+![Architecture Diagram](docs/images/harbor-notifier-architecture.png)
 
 ## Key Features
 

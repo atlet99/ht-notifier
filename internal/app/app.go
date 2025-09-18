@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"os"
 	"os/signal"
@@ -10,18 +11,67 @@ import (
 
 	"github.com/atlet99/ht-notifier/internal/config"
 	"github.com/atlet99/ht-notifier/internal/httpx"
+	"github.com/atlet99/ht-notifier/internal/notif"
 	"github.com/atlet99/ht-notifier/internal/version"
 )
 
 type App struct {
-	config     *config.Config
-	httpServer *http.Server
+	config      *config.Config
+	httpServer  *http.Server
 	httpHandler *httpx.Handler
+	notifiers   []notif.Notifier
+}
+
+func createNotifiers(cfg *config.Config) ([]notif.Notifier, error) {
+	var notifiers []notif.Notifier
+
+	// Create rate limiter
+	limiter := notif.NewRateLimiter(30, 10) // 30 requests per minute, burst of 10
+
+	// Create email notifier if enabled
+	if cfg.Notify.Email.Enabled {
+		emailNotifier, err := notif.NewEmail(cfg.Notify.Email, limiter)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create email notifier: %w", err)
+		}
+		notifiers = append(notifiers, emailNotifier)
+	}
+
+	// Create Telegram notifier if enabled
+	if cfg.Notify.Telegram.Enabled {
+		telegramNotifier, err := notif.NewTelegram(cfg.Notify.Telegram, limiter)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create telegram notifier: %w", err)
+		}
+		notifiers = append(notifiers, telegramNotifier)
+	}
+
+	// Create Slack notifier if enabled
+	if cfg.Notify.Slack.Enabled {
+		slackNotifier, err := notif.NewSlack(cfg.Notify.Slack, limiter)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create slack notifier: %w", err)
+		}
+		notifiers = append(notifiers, slackNotifier)
+	}
+
+	// If no notifiers are enabled, create a noop notifier
+	if len(notifiers) == 0 {
+		notifiers = append(notifiers, &notif.Noop{})
+	}
+
+	return notifiers, nil
 }
 
 func New(cfg *config.Config) (*App, error) {
+	// Create notifiers
+	notifiers, err := createNotifiers(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create notifiers: %w", err)
+	}
+
 	// Create HTTP handler
-	httpHandler := httpx.NewHandler(cfg, nil, nil) // TODO: Pass logger and metrics
+	httpHandler := httpx.NewHandler(cfg, nil, nil, notifiers) // TODO: Pass logger and metrics
 
 	// Create HTTP server
 	httpServer := &http.Server{
@@ -30,9 +80,10 @@ func New(cfg *config.Config) (*App, error) {
 	}
 
 	return &App{
-		config:     cfg,
-		httpServer: httpServer,
+		config:      cfg,
+		httpServer:  httpServer,
 		httpHandler: httpHandler,
+		notifiers:   notifiers,
 	}, nil
 }
 
