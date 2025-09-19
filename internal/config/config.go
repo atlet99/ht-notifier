@@ -32,6 +32,9 @@ type ServerConfig struct {
 	HMACSecret        string        `yaml:"hmac_secret"`
 	IPAllowlist       []string      `yaml:"ip_allowlist"`
 	EnablePprof       bool          `yaml:"enable_pprof"`
+	MaxRequestSize    int64         `yaml:"max_request_size"`
+	RateLimit         int           `yaml:"rate_limit"`
+	RateLimitBurst    int           `yaml:"rate_limit_burst"`
 }
 
 type HarborConfig struct {
@@ -330,6 +333,9 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("server.read_header_timeout", "5s")
 	v.SetDefault("server.shutdown_timeout", "10s")
 	v.SetDefault("server.enable_pprof", false)
+	v.SetDefault("server.max_request_size", 1024*1024) // 1MB
+	v.SetDefault("server.rate_limit", 100)             // requests per minute
+	v.SetDefault("server.rate_limit_burst", 20)        // burst requests
 	
 	// Harbor configuration
 	v.SetDefault("harbor.base_url", "https://harbor.local")

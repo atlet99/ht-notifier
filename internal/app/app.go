@@ -2,7 +2,6 @@ package app
 
 import (
 	"context"
-	"fmt"
 	"net/http"
 	"os"
 	"os/signal"
@@ -10,9 +9,11 @@ import (
 	"time"
 
 	"github.com/atlet99/ht-notifier/internal/config"
+	"github.com/atlet99/ht-notifier/internal/errors"
 	"github.com/atlet99/ht-notifier/internal/httpx"
 	"github.com/atlet99/ht-notifier/internal/notif"
 	"github.com/atlet99/ht-notifier/internal/version"
+	"go.uber.org/zap"
 )
 
 type App struct {
@@ -20,58 +21,15 @@ type App struct {
 	httpServer  *http.Server
 	httpHandler *httpx.Handler
 	notifiers   []notif.Notifier
+	logger      *zap.Logger
+	errorLogger *errors.ErrorLogger
+	errorRecovery *errors.ErrorRecovery
 }
 
-func createNotifiers(cfg *config.Config) ([]notif.Notifier, error) {
-	var notifiers []notif.Notifier
-
-	// Create rate limiter
-	limiter := notif.NewRateLimiter(30, 10) // 30 requests per minute, burst of 10
-
-	// Create email notifier if enabled
-	if cfg.Notify.Email.Enabled {
-		emailNotifier, err := notif.NewEmail(cfg.Notify.Email, limiter)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create email notifier: %w", err)
-		}
-		notifiers = append(notifiers, emailNotifier)
-	}
-
-	// Create Telegram notifier if enabled
-	if cfg.Notify.Telegram.Enabled {
-		telegramNotifier, err := notif.NewTelegram(cfg.Notify.Telegram, limiter)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create telegram notifier: %w", err)
-		}
-		notifiers = append(notifiers, telegramNotifier)
-	}
-
-	// Create Slack notifier if enabled
-	if cfg.Notify.Slack.Enabled {
-		slackNotifier, err := notif.NewSlack(cfg.Notify.Slack, limiter)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create slack notifier: %w", err)
-		}
-		notifiers = append(notifiers, slackNotifier)
-	}
-
-	// If no notifiers are enabled, create a noop notifier
-	if len(notifiers) == 0 {
-		notifiers = append(notifiers, &notif.Noop{})
-	}
-
-	return notifiers, nil
-}
-
-func New(cfg *config.Config) (*App, error) {
-	// Create notifiers
-	notifiers, err := createNotifiers(cfg)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create notifiers: %w", err)
-	}
-
-	// Create HTTP handler
-	httpHandler := httpx.NewHandler(cfg, nil, nil, notifiers) // TODO: Pass logger and metrics
+func New(cfg *config.Config, logger *zap.Logger, httpHandler *httpx.Handler, notifiers []notif.Notifier) (*App, error) {
+	// Initialize error handling components
+	errorLogger := errors.NewErrorLogger(logger)
+	errorRecovery := errors.NewErrorRecovery(logger, 3, 1*time.Second)
 
 	// Create HTTP server
 	httpServer := &http.Server{
@@ -80,41 +38,64 @@ func New(cfg *config.Config) (*App, error) {
 	}
 
 	return &App{
-		config:      cfg,
-		httpServer:  httpServer,
-		httpHandler: httpHandler,
-		notifiers:   notifiers,
+		config:        cfg,
+		httpServer:    httpServer,
+		httpHandler:   httpHandler,
+		notifiers:     notifiers,
+		logger:        logger,
+		errorLogger:   errorLogger,
+		errorRecovery: errorRecovery,
 	}, nil
 }
 
 func (a *App) Run(ctx context.Context) error {
-	// Start HTTP server in a goroutine
+	// Start HTTP server with error recovery
 	serverErr := make(chan error, 1)
 	go func() {
-		if err := a.httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			serverErr <- err
+		err := a.httpServer.ListenAndServe()
+		if err != nil && err != http.ErrServerClosed {
+			a.errorLogger.LogError(err, zap.String("server", "http"))
+			serverErr <- errors.Wrap(err, errors.ErrorTypeInternal, "server_start_failed",
+				"HTTP server failed to start")
 		}
 	}()
 
-	// Wait for context cancellation or server error
+	// Wait for context cancellation or server error with proper error handling
 	select {
 	case err := <-serverErr:
+		a.errorLogger.LogError(err, zap.String("phase", "server_running"))
 		return err
 	case <-ctx.Done():
-		// Context cancelled, initiate graceful shutdown
-		return a.Shutdown()
+		// Context cancelled, initiate graceful shutdown with error recovery
+		shutdownErr := a.Shutdown()
+		if shutdownErr != nil {
+			a.errorLogger.LogError(shutdownErr, zap.String("phase", "graceful_shutdown"))
+			return errors.Wrap(shutdownErr, errors.ErrorTypeInternal, "shutdown_failed",
+				"Graceful shutdown failed")
+		}
+		return nil
 	}
 }
 
 func (a *App) Shutdown() error {
+	// Create context for shutdown with timeout
 	ctx, cancel := context.WithTimeout(context.Background(), a.config.Server.ShutdownTimeout)
 	defer cancel()
 
-	// Shutdown HTTP server
-	if err := a.httpServer.Shutdown(ctx); err != nil {
-		return err
+	// Log shutdown initiation
+	a.logger.Info("Initiating graceful shutdown",
+		zap.Duration("timeout", a.config.Server.ShutdownTimeout))
+
+	// Shutdown HTTP server with error handling
+	shutdownErr := a.httpServer.Shutdown(ctx)
+	if shutdownErr != nil {
+		a.errorLogger.LogError(shutdownErr, zap.String("component", "http_server"))
+		return errors.Wrap(shutdownErr, errors.ErrorTypeInternal, "http_shutdown_failed",
+			"HTTP server shutdown failed")
 	}
 
+	// Log successful shutdown
+	a.logger.Info("Graceful shutdown completed successfully")
 	return nil
 }
 
