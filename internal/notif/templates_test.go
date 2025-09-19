@@ -117,11 +117,11 @@ func TestTemplateFunctions(t *testing.T) {
 	}{
 		{
 			name:     "severityIcon",
-			template: "{{severityIcon .Severity.CRITICAL}}",
+			template: "{{severityIcon .Severity}}",
 			data: struct {
-				Severity map[string]int
+				Severity string
 			}{
-				Severity: map[string]int{"CRITICAL": 1},
+				Severity: "CRITICAL",
 			},
 			expected: "🔴",
 		},
@@ -169,17 +169,17 @@ if err != nil {
 	t.Fatalf("Failed to create template manager: %v", err)
 }
 
+// Get the template functions map
+funcMap := tmplManager.TemplateFunctions()
+
 for _, tc := range testCases {
 	t.Run(tc.name, func(t *testing.T) {
-		// Create a simple template for testing
-		tmpl := template.New("test")
+		// Create a template with the template manager's functions
+		tmpl := template.New("test").Funcs(funcMap)
 		tmpl, err = tmpl.Parse(tc.template)
 		if err != nil {
 			t.Fatalf("Failed to parse template: %v", err)
 		}
-
-		// Add custom functions from the template manager
-		tmpl = tmplManager.addCustomFunctions(tmpl)
 
 		// Execute template
 		var buf bytes.Buffer
@@ -214,7 +214,7 @@ func TestFileTemplateLoading(t *testing.T) {
 
 	templateConfig := config.TemplateConfig{
 		Enabled:    true,
-		Path:       "templates/examples", // Use our example templates
+		Path:       "../../templates/examples", // Use our example templates
 		Reload:     false,
 		WatchFiles: false,
 	}

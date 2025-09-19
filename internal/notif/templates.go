@@ -103,17 +103,21 @@ func (t *MessageTemplates) loadFileTemplates() error {
 			continue
 		}
 
+		// Create template with custom functions first
+		tmpl := template.New(templateName)
+		tmpl = t.addCustomFunctions(tmpl)
+		
 		// Parse template
-		tmpl, err := template.New(templateName).Parse(string(content))
+		tmpl, err = tmpl.Parse(string(content))
 		if err != nil {
 			t.logger.Error("Failed to parse template", zap.String("file", filePath), zap.Error(err))
 			continue
 		}
 
-		tmpl = t.addCustomFunctions(tmpl)
 		t.templates[templateName] = tmpl
 
 		t.logger.Info("Loaded template from file", zap.String("name", templateName), zap.String("file", filePath))
+		t.logger.Debug("Template functions added", zap.String("template", templateName))
 	}
 
 	if len(t.templates) == 0 {
@@ -319,9 +323,10 @@ func escapeMarkdown(text string) string {
 	return text
 }
 
-// TemplateFunctions adds custom template functions
-func (t *MessageTemplates) addCustomFunctions(tmpl *template.Template) *template.Template {
-	return tmpl.Funcs(template.FuncMap{
+
+// TemplateFunctions returns the template functions map
+func (t *MessageTemplates) TemplateFunctions() template.FuncMap {
+	return template.FuncMap{
 		// Severity functions
 		"severityIcon": func(severity string) string {
 			switch severity {
@@ -477,5 +482,10 @@ func (t *MessageTemplates) addCustomFunctions(tmpl *template.Template) *template
 			}
 			return text[:length] + "..."
 		},
-	})
+	}
+}
+
+// addCustomFunctions adds custom template functions to a template
+func (t *MessageTemplates) addCustomFunctions(tmpl *template.Template) *template.Template {
+	return tmpl.Funcs(t.TemplateFunctions())
 }
