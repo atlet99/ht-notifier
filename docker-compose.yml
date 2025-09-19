@@ -1,0 +1,94 @@
+services:
+  ht-notifier:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        VERSION: ${VERSION:-dev}
+        COMMIT: ${COMMIT:-none}
+        DATE: ${DATE:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}
+    image: ${IMAGE_NAME:-ghcr.io/atlet99/ht-notifier}:${VERSION:-dev}
+    container_name: ht-notifier
+    restart: unless-stopped
+    ports:
+      - "${SERVER_PORT:-8080}:8080"
+      - "${METRICS_PORT:-9090}:9090"
+    volumes:
+      - ./config:/etc/notifier:ro
+      - ./logs:/app/logs
+    environment:
+      - CONFIG_FILE=/etc/notifier/config.yaml
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+      - LOG_FORMAT=${LOG_FORMAT:-json}
+    depends_on:
+      - harbor
+    networks:
+      - notifier-network
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  harbor:
+    image: goharbor/harbor:v2.14.0
+    container_name: harbor
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "4443:4443"
+    volumes:
+      - harbor_data:/storage
+      - harbor_config:/etc/harbor
+    environment:
+      - HARBOR_ADMIN_PASSWORD=${HARBOR_ADMIN_PASSWORD:-Harbor12345}
+      - DATABASE_PASSWORD=${DATABASE_PASSWORD:-changeit}
+      - SECRET_KEY=${SECRET_KEY:-not-a-secure-secret}
+      - JWT_SECRET=${JWT_SECRET:-not-a-secure-jwt-secret}
+    networks:
+      - notifier-network
+
+  prometheus:
+    image: quay.io/prometheus/prometheus:v3.5.0
+    container_name: prometheus
+    restart: unless-stopped
+    ports:
+      - "9091:9090"
+    volumes:
+      - ./deployments/docker/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=200h'
+      - '--web.enable-lifecycle'
+    networks:
+      - notifier-network
+
+  grafana:
+    image: grafana/grafana:12.1.0-16509090662-ubuntu
+    container_name: grafana
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./deployments/docker/grafana/provisioning:/etc/grafana/provisioning:ro
+    networks:
+      - notifier-network
+
+volumes:
+  harbor_data:
+  harbor_config:
+  prometheus_data:
+  grafana_data:
+
+networks:
+  notifier-network:
+    driver: bridge
