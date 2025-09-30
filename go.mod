@@ -11,7 +11,7 @@ require (
 	github.com/slack-go/slack v0.17.3
 	github.com/spf13/pflag v1.0.10
 	github.com/spf13/viper v1.21.0
-	github.com/wneessen/go-mail v0.7.0
+	github.com/wneessen/go-mail v0.7.1
 	go.uber.org/zap v1.27.0
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1
 )
