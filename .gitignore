@@ -41,3 +41,6 @@ go.work.sum
 
 # Binaries for Go
 bin/
+
+# Github Content Extractor
+github_api_extractor.go
