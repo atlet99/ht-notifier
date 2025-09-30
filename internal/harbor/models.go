@@ -7,20 +7,20 @@ import (
 
 // ArtifactOverview represents the scan overview response from Harbor API
 type ArtifactOverview struct {
-	Components int                    `json:"components"`
-	Summary    map[string]interface{} `json:"summary"` // Severity counts
-	Scanner    string                 `json:"scanner,omitempty"`
-	Vulnerabilities []Vulnerability   `json:"vulnerabilities,omitempty"`
+	Components      int                    `json:"components"`
+	Summary         map[string]interface{} `json:"summary"` // Severity counts
+	Scanner         string                 `json:"scanner,omitempty"`
+	Vulnerabilities []Vulnerability        `json:"vulnerabilities,omitempty"`
 }
 
 // Vulnerability represents a single vulnerability finding
 type Vulnerability struct {
-	Severity     string `json:"severity"`
+	Severity        string `json:"severity"`
 	VulnerabilityID string `json:"vulnerability_id"`
-	Package      string `json:"package"`
-	Version      string `json:"version"`
-	Description  string `json:"description"`
-	Links        []Link `json:"links,omitempty"`
+	Package         string `json:"package"`
+	Version         string `json:"version"`
+	Description     string `json:"description"`
+	Links           []Link `json:"links,omitempty"`
 }
 
 // Link represents a related link for a vulnerability
@@ -31,14 +31,14 @@ type Link struct {
 
 // Artifact represents an artifact from Harbor API
 type Artifact struct {
-	Digest      string                 `json:"digest"`
-	Tag         string                 `json:"tag"`
-	Repository  Repository             `json:"repository"`
-	Labels      []Label                `json:"labels,omitempty"`
-	Immutable   bool                   `json:"immutable"`
-	Properties  map[string]interface{} `json:"properties,omitempty"`
-	CreatedAt   time.Time              `json:"creation_time"`
-	UpdatedAt   time.Time              `json:"update_time"`
+	Digest     string                 `json:"digest"`
+	Tag        string                 `json:"tag"`
+	Repository Repository             `json:"repository"`
+	Labels     []Label                `json:"labels,omitempty"`
+	Immutable  bool                   `json:"immutable"`
+	Properties map[string]interface{} `json:"properties,omitempty"`
+	CreatedAt  time.Time              `json:"creation_time"`
+	UpdatedAt  time.Time              `json:"update_time"`
 }
 
 // Repository represents a repository in Harbor
@@ -120,7 +120,7 @@ type Tag struct {
 
 // ScanAllPolicy represents scan all policy
 type ScanAllPolicy struct {
-	Type     string `json:"type"`
+	Type      string `json:"type"`
 	Parameter string `json:"parameter"`
 }
 
@@ -131,23 +131,23 @@ type AdvancedScan struct {
 
 // ScanOverview represents a simplified scan overview for webhook processing
 type ScanOverview struct {
-	Status    string                 `json:"status"`
-	Summary   map[string]int         `json:"summary"` // Severity counts
-	Scanner   string                 `json:"scanner"`
-	Timestamp time.Time              `json:"timestamp"`
-	Findings  []ScanFinding          `json:"findings"`
+	Status    string         `json:"status"`
+	Summary   map[string]int `json:"summary"` // Severity counts
+	Scanner   string         `json:"scanner"`
+	Timestamp time.Time      `json:"timestamp"`
+	Findings  []ScanFinding  `json:"findings"`
 }
 
 // ScanFinding represents a single scan finding
 type ScanFinding struct {
-	Severity     string                 `json:"severity"`
-	VulnerabilityID string               `json:"vulnerability_id"`
-	Package      string                 `json:"package"`
-	Version      string                 `json:"version"`
-	Title        string                 `json:"title"`
-	Description  string                 `json:"description"`
-	Links        []Link                 `json:"links"`
-	PrimaryURL   string                 `json:"primary_url"`
+	Severity        string `json:"severity"`
+	VulnerabilityID string `json:"vulnerability_id"`
+	Package         string `json:"package"`
+	Version         string `json:"version"`
+	Title           string `json:"title"`
+	Description     string `json:"description"`
+	Links           []Link `json:"links"`
+	PrimaryURL      string `json:"primary_url"`
 }
 
 // WebhookEvent represents a webhook event from Harbor
@@ -161,38 +161,38 @@ type WebhookEvent struct {
 // ExtractEvent extracts webhook event data into a structured format
 func ExtractEvent(data map[string]interface{}) (*WebhookEvent, error) {
 	event := &WebhookEvent{}
-	
+
 	// Extract basic fields
 	if typ, ok := data["type"].(string); ok {
 		event.Type = typ
 	} else {
 		return nil, fmt.Errorf("missing or invalid event type")
 	}
-	
+
 	if occurAt, ok := data["occur_at"].(float64); ok {
 		event.OccurAt = int64(occurAt)
 	} else {
 		return nil, fmt.Errorf("missing or invalid occur_at")
 	}
-	
+
 	if operator, ok := data["operator"].(string); ok {
 		event.Operator = operator
 	}
-	
+
 	// Extract event data
 	if eventData, ok := data["event_data"].(map[string]interface{}); ok {
 		event.EventData = eventData
 	} else {
 		return nil, fmt.Errorf("missing or invalid event_data")
 	}
-	
+
 	return event, nil
 }
 
 // GetResources extracts resources from event data
 func (e *WebhookEvent) GetResources() ([]Resource, error) {
 	resources := []Resource{}
-	
+
 	if resourcesData, ok := e.EventData["resources"].([]interface{}); ok {
 		for _, resourceData := range resourcesData {
 			if resource, ok := resourceData.(map[string]interface{}); ok {
@@ -211,14 +211,14 @@ func (e *WebhookEvent) GetResources() ([]Resource, error) {
 			}
 		}
 	}
-	
+
 	return resources, nil
 }
 
 // GetRepository extracts repository information from event data
 func (e *WebhookEvent) GetRepository() (Repository, error) {
 	repo := Repository{}
-	
+
 	if repoData, ok := e.EventData["repository"].(map[string]interface{}); ok {
 		if id, ok := repoData["project_id"].(float64); ok {
 			repo.ProjectID = int(id)
@@ -230,7 +230,7 @@ func (e *WebhookEvent) GetRepository() (Repository, error) {
 			repo.ProjectName = namespace
 		}
 	}
-	
+
 	return repo, nil
 }
 
@@ -239,7 +239,7 @@ func (e *WebhookEvent) GetScanOverview() (*ScanOverview, error) {
 	overview := &ScanOverview{
 		Summary: make(map[string]int),
 	}
-	
+
 	// Try different possible locations for scan overview data
 	if scanOverview, ok := e.EventData["scan_overview"].(map[string]interface{}); ok {
 		// New format: scan_overview.summary
@@ -250,13 +250,13 @@ func (e *WebhookEvent) GetScanOverview() (*ScanOverview, error) {
 				}
 			}
 		}
-		
+
 		// Try scanner information
 		if scanner, ok := scanOverview["scanner"].(string); ok {
 			overview.Scanner = scanner
 		}
 	}
-	
+
 	// Try legacy format: scan_overview[scanner_key].summary
 	if scanOverview, ok := e.EventData["scan_overview"].(map[string]interface{}); ok {
 		for _, value := range scanOverview {
@@ -274,6 +274,6 @@ func (e *WebhookEvent) GetScanOverview() (*ScanOverview, error) {
 			}
 		}
 	}
-	
+
 	return overview, nil
 }

@@ -35,14 +35,14 @@ const (
 
 // AppError represents an application error with structured information
 type AppError struct {
-	Type       ErrorType `json:"type"`
-	Code       string    `json:"code"`
-	Message    string    `json:"message"`
-	Details    string    `json:"details,omitempty"`
-	HTTPStatus int       `json:"-"`
-	Cause      error     `json:"-"`
+	Type       ErrorType              `json:"type"`
+	Code       string                 `json:"code"`
+	Message    string                 `json:"message"`
+	Details    string                 `json:"details,omitempty"`
+	HTTPStatus int                    `json:"-"`
+	Cause      error                  `json:"-"`
 	Context    map[string]interface{} `json:"context,omitempty"`
-	Timestamp  time.Time `json:"timestamp"`
+	Timestamp  time.Time              `json:"timestamp"`
 }
 
 // Error implements the error interface
@@ -61,11 +61,11 @@ func (e *AppError) Unwrap() error {
 // NewAppError creates a new application error
 func NewAppError(errorType ErrorType, code, message string) *AppError {
 	return &AppError{
-		Type:      errorType,
-		Code:      code,
-		Message:   message,
+		Type:       errorType,
+		Code:       code,
+		Message:    message,
 		HTTPStatus: getHTTPStatusForErrorType(errorType),
-		Timestamp: time.Now().UTC(),
+		Timestamp:  time.Now().UTC(),
 	}
 }
 
@@ -161,19 +161,19 @@ func (el *ErrorLogger) LogError(err error, fields ...zap.Field) {
 			zap.String("error_message", appErr.Message),
 			zap.Time("error_timestamp", appErr.Timestamp),
 		)
-		
+
 		if appErr.Details != "" {
 			fields = append(fields, zap.String("error_details", appErr.Details))
 		}
-		
+
 		if len(appErr.Context) > 0 {
 			fields = append(fields, zap.Any("error_context", appErr.Context))
 		}
-		
+
 		if appErr.Cause != nil {
 			fields = append(fields, zap.Error(appErr.Cause))
 		}
-		
+
 		el.logger.Error("Application error", fields...)
 	} else {
 		el.logger.Error("Error", append(fields, zap.Error(err))...)
@@ -205,14 +205,14 @@ func (er *ErrorRecovery) RetryWithBackoff(operation func() error, ctxData map[st
 			ctx = actualCtx
 		}
 	}
-	
+
 	return er.RetryWithContext(ctx, operation, ctxData)
 }
 
 // RetryWithContext retries an operation with exponential backoff and proper context handling
 func (er *ErrorRecovery) RetryWithContext(ctx context.Context, operation func() error, context map[string]interface{}) error {
 	var lastErr error
-	
+
 	for attempt := 0; attempt < er.maxAttempts; attempt++ {
 		if attempt > 0 {
 			// Calculate exponential backoff
@@ -220,31 +220,31 @@ func (er *ErrorRecovery) RetryWithContext(ctx context.Context, operation func() 
 			if waitTime > 30*time.Second {
 				waitTime = 30 * time.Second
 			}
-			
+
 			er.logger.Info("Retrying operation after backoff",
 				zap.Int("attempt", attempt),
 				zap.Duration("wait_time", waitTime),
 				zap.Any("context", context))
-			
+
 			select {
 			case <-time.After(waitTime):
 			case <-ctx.Done():
 				return ctx.Err()
 			}
 		}
-		
+
 		err := operation()
 		if err == nil {
 			return nil
 		}
-		
+
 		lastErr = err
 		er.logger.Error("Operation failed, will retry",
 			zap.Int("attempt", attempt+1),
 			zap.Error(err),
 			zap.Any("context", context))
 	}
-	
+
 	return fmt.Errorf("operation failed after %d attempts: %w", er.maxAttempts, lastErr)
 }
 
@@ -263,8 +263,8 @@ func NewCircuitBreaker(failureThreshold int, resetTimeout time.Duration, logger 
 	return &CircuitBreaker{
 		failureThreshold: failureThreshold,
 		resetTimeout:     resetTimeout,
-		state:           "closed",
-		logger:          logger,
+		state:            "closed",
+		logger:           logger,
 	}
 }
 
@@ -278,13 +278,13 @@ func (cb *CircuitBreaker) Execute(operation func() error, context map[string]int
 			return Wrap(nil, ErrorTypeUnavailable, "circuit_breaker_open", "circuit breaker is open")
 		}
 	}
-	
+
 	err := operation()
 	if err != nil {
 		cb.recordFailure()
 		return err
 	}
-	
+
 	cb.recordSuccess()
 	return nil
 }
@@ -293,7 +293,7 @@ func (cb *CircuitBreaker) Execute(operation func() error, context map[string]int
 func (cb *CircuitBreaker) recordFailure() {
 	cb.failures++
 	cb.lastFailureTime = time.Now()
-	
+
 	if cb.failures >= cb.failureThreshold {
 		cb.state = "open"
 		cb.logger.Error("Circuit breaker opened", zap.Int("failures", cb.failures))

@@ -57,7 +57,7 @@ func NewTelegram(cfg config.TelegramConfig, limiter RateLimiter) (*Telegram, err
 	// Add webhook configuration if enabled
 	if cfg.Webhook.Enabled {
 		opts = append(opts, bot.WithWebhookSecretToken(cfg.Webhook.SecretToken))
-		
+
 		// Set allowed updates
 		if len(cfg.Webhook.AllowedUpdates) > 0 {
 			allowedUpdates := make([]string, len(cfg.Webhook.AllowedUpdates))
@@ -75,7 +75,7 @@ func NewTelegram(cfg config.TelegramConfig, limiter RateLimiter) (*Telegram, err
 	// Test bot connection
 	ctx, cancel := context.WithTimeout(context.Background(), cfg.Timeout)
 	defer cancel()
-	
+
 	if _, err := b.GetMe(ctx); err != nil {
 		return nil, fmt.Errorf("failed to initialize Telegram bot: %w", err)
 	}
@@ -279,19 +279,19 @@ func ValidateTelegramConfig(cfg config.TelegramConfig) error {
 	if cfg.BotToken == "" {
 		return fmt.Errorf("Telegram bot token is required")
 	}
-	
+
 	if cfg.ChatID == "" {
 		return fmt.Errorf("Telegram chat ID is required")
 	}
-	
+
 	if cfg.Timeout <= 0 {
 		return fmt.Errorf("Telegram timeout must be positive")
 	}
-	
+
 	if cfg.RatePerMinute <= 0 {
 		return fmt.Errorf("Telegram rate per minute must be positive")
 	}
-	
+
 	return nil
 }
 
@@ -301,13 +301,13 @@ func parseChatID(chatIDStr string) (int64, error) {
 	if strings.HasPrefix(chatIDStr, "@") {
 		return 0, fmt.Errorf("username chat IDs are not supported, please use numeric chat ID")
 	}
-	
+
 	// Parse as numeric ID
 	chatID, err := strconv.ParseInt(chatIDStr, 10, 64)
 	if err != nil {
 		return 0, fmt.Errorf("invalid chat ID format: %w", err)
 	}
-	
+
 	return chatID, nil
 }
 
@@ -407,9 +407,9 @@ func (t *Telegram) SendMessage(ctx context.Context, text string, params *bot.Sen
 // SendPhoto sends a photo to Telegram
 func (t *Telegram) SendPhoto(ctx context.Context, photo models.InputFile, caption string) error {
 	_, err := t.bot.SendPhoto(ctx, &bot.SendPhotoParams{
-		ChatID:  t.chatID,
-		Photo:   photo,
-		Caption: caption,
+		ChatID:    t.chatID,
+		Photo:     photo,
+		Caption:   caption,
 		ParseMode: "Markdown",
 	})
 	return err
@@ -418,9 +418,9 @@ func (t *Telegram) SendPhoto(ctx context.Context, photo models.InputFile, captio
 // SendDocument sends a document to Telegram
 func (t *Telegram) SendDocument(ctx context.Context, document models.InputFile, caption string) error {
 	_, err := t.bot.SendDocument(ctx, &bot.SendDocumentParams{
-		ChatID:   t.chatID,
-		Document: document,
-		Caption:  caption,
+		ChatID:    t.chatID,
+		Document:  document,
+		Caption:   caption,
 		ParseMode: "Markdown",
 	})
 	return err
@@ -432,7 +432,7 @@ func (t *Telegram) SendPoll(ctx context.Context, question string, options []stri
 	for i, option := range options {
 		pollOptions[i] = models.InputPollOption{Text: option}
 	}
-	
+
 	isAnonymous := false
 	_, err := t.bot.SendPoll(ctx, &bot.SendPollParams{
 		ChatID:      t.chatID,
@@ -451,7 +451,7 @@ func (t *Telegram) SetWebhook(ctx context.Context, url string, secretToken strin
 	if secretToken != "" {
 		params.SecretToken = secretToken
 	}
-	
+
 	_, err := t.bot.SetWebhook(ctx, params)
 	return err
 }

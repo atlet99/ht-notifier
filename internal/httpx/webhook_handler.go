@@ -16,11 +16,11 @@ import (
 
 // WebhookHandler handles Harbor webhook requests
 type WebhookHandler struct {
-	securityManager   *util.SecurityManager
-	eventProcessor    *proc.HarborEventProcessor
-	logger            *zap.Logger
-	maxRequestSize    int64
-	metrics           *WebhookMetrics
+	securityManager *util.SecurityManager
+	eventProcessor  *proc.HarborEventProcessor
+	logger          *zap.Logger
+	maxRequestSize  int64
+	metrics         *WebhookMetrics
 }
 
 // WebhookMetrics tracks webhook-related metrics
@@ -39,11 +39,11 @@ func NewWebhookHandler(
 	metrics *WebhookMetrics,
 ) *WebhookHandler {
 	return &WebhookHandler{
-		securityManager:   securityManager,
-		eventProcessor:    eventProcessor,
-		logger:            logger,
-		maxRequestSize:    maxRequestSize,
-		metrics:           metrics,
+		securityManager: securityManager,
+		eventProcessor:  eventProcessor,
+		logger:          logger,
+		maxRequestSize:  maxRequestSize,
+		metrics:         metrics,
 	}
 }
 
@@ -56,16 +56,16 @@ func (h *WebhookHandler) RegisterRoutes(r chi.Router) {
 // HandleHarborWebhook handles incoming Harbor webhook requests
 func (h *WebhookHandler) HandleHarborWebhook(w http.ResponseWriter, r *http.Request) {
 	startTime := time.Now()
-	
+
 	// Record request metrics
 	h.metrics.RequestsTotal.WithLabelValues("harbor_webhook", "total").Inc()
-	
+
 	// Limit request size
 	if h.maxRequestSize > 0 && r.ContentLength > h.maxRequestSize {
 		h.logger.Error("Request too large",
 			zap.Int64("content_length", r.ContentLength),
 			zap.Int64("max_size", h.maxRequestSize))
-		
+
 		h.metrics.ErrorsTotal.WithLabelValues("harbor_webhook", "request_too_large").Inc()
 		http.Error(w, "Request entity too large", http.StatusRequestEntityTooLarge)
 		return
@@ -87,7 +87,7 @@ func (h *WebhookHandler) HandleHarborWebhook(w http.ResponseWriter, r *http.Requ
 			zap.String("remote_addr", r.RemoteAddr),
 			zap.String("method", r.Method),
 			zap.String("path", r.URL.Path))
-		
+
 		h.metrics.ErrorsTotal.WithLabelValues("harbor_webhook", "hmac_failed").Inc()
 		http.Error(w, "Unauthorized - Invalid HMAC signature", http.StatusUnauthorized)
 		return
@@ -99,7 +99,7 @@ func (h *WebhookHandler) HandleHarborWebhook(w http.ResponseWriter, r *http.Requ
 		h.logger.Error("Failed to parse webhook payload",
 			zap.Error(err),
 			zap.String("payload_preview", string(body[:min(len(body), 500)])))
-		
+
 		h.metrics.ErrorsTotal.WithLabelValues("harbor_webhook", "parse_failed").Inc()
 		http.Error(w, "Bad Request - Invalid JSON payload", http.StatusBadRequest)
 		return
@@ -110,7 +110,7 @@ func (h *WebhookHandler) HandleHarborWebhook(w http.ResponseWriter, r *http.Requ
 		h.logger.Error("Invalid webhook event",
 			zap.Error(err),
 			zap.String("event_type", webhookEvent.Type))
-		
+
 		h.metrics.ErrorsTotal.WithLabelValues("harbor_webhook", "validation_failed").Inc()
 		http.Error(w, "Bad Request - Invalid webhook event", http.StatusBadRequest)
 		return
@@ -127,7 +127,7 @@ func (h *WebhookHandler) HandleHarborWebhook(w http.ResponseWriter, r *http.Requ
 		h.logger.Error("Failed to process webhook event",
 			zap.String("event_type", webhookEvent.Type),
 			zap.Error(err))
-		
+
 		h.metrics.ErrorsTotal.WithLabelValues("harbor_webhook", "processing_failed").Inc()
 		http.Error(w, "Internal Server Error - Failed to process event", http.StatusInternalServerError)
 		return

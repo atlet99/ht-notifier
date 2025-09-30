@@ -168,6 +168,16 @@ func createNotifiers(cfg *config.Config, logger *zap.Logger) ([]notif.Notifier, 
 		logger.Info("Slack notifier enabled")
 	}
 
+	// Create Mattermost notifier if enabled
+	if cfg.Notify.Mattermost.Enabled {
+		mattermostNotifier, err := notif.NewMattermost(cfg.Notify.Mattermost, limiter)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create mattermost notifier: %w", err)
+		}
+		notifiers = append(notifiers, mattermostNotifier)
+		logger.Info("Mattermost notifier enabled")
+	}
+
 	// If no notifiers are enabled, create a noop notifier
 	if len(notifiers) == 0 {
 		notifiers = append(notifiers, &notif.Noop{})

@@ -17,12 +17,12 @@ import (
 )
 
 type App struct {
-	config      *config.Config
-	httpServer  *http.Server
-	httpHandler *httpx.Handler
-	notifiers   []notif.Notifier
-	logger      *zap.Logger
-	errorLogger *errors.ErrorLogger
+	config        *config.Config
+	httpServer    *http.Server
+	httpHandler   *httpx.Handler
+	notifiers     []notif.Notifier
+	logger        *zap.Logger
+	errorLogger   *errors.ErrorLogger
 	errorRecovery *errors.ErrorRecovery
 }
 

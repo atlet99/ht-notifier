@@ -17,9 +17,9 @@ import (
 
 // SecurityManager handles security features like HMAC verification and IP allowlisting
 type SecurityManager struct {
-	hmacSecret   string
-	ipAllowlist  []string
-	logger       *zap.Logger
+	hmacSecret  string
+	ipAllowlist []string
+	logger      *zap.Logger
 }
 
 // NewSecurityManager creates a new security manager

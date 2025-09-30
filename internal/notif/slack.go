@@ -170,11 +170,11 @@ func (s *Slack) getMessageOptions(msg Message) []slack.MsgOption {
 	// Add attachments if message has metadata
 	if len(msg.Metadata) > 0 {
 		attachment := slack.Attachment{
-			Color:         s.getAttachmentColor(msg),
-			Fields:        s.createAttachmentFields(msg),
-			Footer:        "Harbor Notifier",
-			Ts:            json.Number(strconv.FormatInt(time.Now().Unix(), 10)),
-			MarkdownIn:    []string{"text", "pretext"},
+			Color:      s.getAttachmentColor(msg),
+			Fields:     s.createAttachmentFields(msg),
+			Footer:     "Harbor Notifier",
+			Ts:         json.Number(strconv.FormatInt(time.Now().Unix(), 10)),
+			MarkdownIn: []string{"text", "pretext"},
 		}
 
 		options = append(options, slack.MsgOptionAttachments(attachment))
@@ -281,13 +281,13 @@ func (s *Slack) escapeMarkdown(text string) string {
 	text = strings.ReplaceAll(text, "&", "&")
 	text = strings.ReplaceAll(text, "<", "<")
 	text = strings.ReplaceAll(text, ">", ">")
-	
+
 	// Escape special characters that might break formatting
 	text = strings.ReplaceAll(text, "*", "\\*")
 	text = strings.ReplaceAll(text, "_", "\\_")
 	text = strings.ReplaceAll(text, "~", "\\~")
 	text = strings.ReplaceAll(text, "`", "\\`")
-	
+
 	return text
 }
 

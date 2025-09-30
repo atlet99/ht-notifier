@@ -44,3 +44,6 @@ bin/
 
 # Github Content Extractor
 github_api_extractor.go
+
+# Slack API Extractor
+slack_api_extractor.go

@@ -1,72 +1,67 @@
-# Harbor Notifier Configuration Example
-# This file shows various configurations for different email providers
+# Harbor Notifier Configuration
+# This file contains example configurations for various notification targets
 
 # Server Configuration
 server:
   addr: ":8080"
   base_path: "/"
   read_header_timeout: "5s"
-  shutdown_timeout: "10s"
+  shutdown_timeout: "30s"
+  hmac_secret: "your-secret-hmac-key"
+  ip_allowlist: []
   enable_pprof: false
+  max_request_size: 1048576
+  rate_limit: 100
+  rate_limit_burst: 10
 
 # Harbor Configuration
 harbor:
-  base_url: "https://harbor.local"
+  base_url: "https://harbor.example.com"
   username: "admin"
-  password: "harbor_password"
+  password: "Harbor12345"
   insecure_skip_verify: false
   timeout: "30s"
 
 # Notification Configuration
 notify:
-  # Telegram Configuration (optional)
+  # Telegram Configuration
   telegram:
     enabled: false
-    bot_token: "your_telegram_bot_token"
-    chat_id: "your_chat_id"
+    bot_token: "your-telegram-bot-token"
+    chat_id: "your-chat-id"
     timeout: "5s"
-    rate_per_minute: 30
-
-  # Slack Configuration (optional)
-  slack:
-    enabled: false
-    token: "xoxb-your-slack-bot-token"
-    channel: "#alerts"
-    timeout: "5s"
-    rate_per_minute: 30
+    rate_per_minute: 20
     debug: false
-    username: "Harbor Notifier"
-    icon_emoji: ":warning:"
-    link_names: false
-    unfurl_links: false
-    unfurl_media: false
-    markdown: true
-    
-    # Message Format Configuration
+    webhook:
+      enabled: false
+      url: "https://your-domain.com/telegram/webhook"
+      secret_token: "your-webhook-secret"
+      max_connections: 10
+      allowed_updates: []
     message_format:
       escape_markdown: true
       disable_web_preview: false
-      enable_html: false
+      enable_html: true
       show_timestamp: true
       include_severity: true
-      max_message_length: 4000
-      custom_prefix: ""
+      max_message_length: 4096
+      custom_prefix: "🚨 [HARBOR]"
       custom_suffix: ""
-      
-      # Severity Colors Configuration
       severity_colors:
         critical: "🔴"
         high: "🟠"
         medium: "🟡"
         low: "🟢"
         unknown: "⚪"
+    templates:
+      enabled: true
+      path: "/etc/notifier/templates"
 
   # Email Configuration
   email:
-    enabled: true
+    enabled: false
     subject_prefix: "[Harbor Alert]"
     smtp:
-      # Basic SMTP Settings
       host: "smtp.gmail.com"
       port: 587
       username: "your_email@gmail.com"
@@ -76,55 +71,81 @@ notify:
       timeout: "30s"
       auth_type: "xoauth2"
       encryption: "tls"
-      
-      # Advanced SMTP Settings
-      helo_host: ""
-      local_name: ""
-      disable_helo: false
-      disable_starttls: false
-      ssl_insecure: false
-      ssl_nocertcheck: false
-      ssl_noverify: false
-      ssl_noverify_hostname: false
-      ssl_noverify_ca: false
-      ssl_noverify_crl: false
-      ssl_noverify_ocsp: false
-      ssl_noverify_signature: false
-      ssl_noverify_ext_key_usage: false
-      ssl_noverify_key_usage: false
-      ssl_noverify_server_name: false
-      ssl_noverify_subject: false
-      ssl_noverify_sans: false
-      ssl_noverify_email: false
-      ssl_noverify_ip: false
-      ssl_noverify_dns: false
-      ssl_noverify_uris: false
-      ssl_noverify_other_names: false
-      ssl_noverify_all_names: false
-      ssl_noverify_any_name: false
-      ssl_noverify_no_names: false
-      ssl_noverify_no_sans: false
-      ssl_noverify_no_email: false
-      ssl_noverify_no_ip: false
-      ssl_noverify_no_dns: false
-      ssl_noverify_no_uris: false
-      ssl_noverify_no_other_names: false
-      ssl_noverify_no_all_names: false
-      ssl_noverify_no_any_name: false
-      ssl_noverify_no_no_names: false
-      ssl_noverify_no_no_sans: false
-      ssl_noverify_no_no_email: false
-      ssl_noverify_no_no_ip: false
-      ssl_noverify_no_no_dns: false
-      ssl_noverify_no_no_uris: false
-      ssl_noverify_no_no_other_names: false
-      ssl_noverify_no_no_all_names: false
-      ssl_noverify_no_no_any_name: false
-      ssl_noverify_no_no_no_names: false
     to:
       - "admin@example.com"
       - "security@example.com"
       - "devops@example.com"
+
+  # Slack Configuration
+  slack:
+    enabled: false
+    token: "xoxb-your-slack-bot-token"
+    channel: "#security-alerts"
+    timeout: "5s"
+    rate_per_minute: 60
+    debug: true
+    username: "Harbor Security Bot"
+    icon_emoji: ":shield:"
+    icon_url: ""
+    link_names: true
+    unfurl_links: true
+    unfurl_media: true
+    markdown: true
+    message_format:
+      escape_markdown: false
+      disable_web_preview: false
+      enable_html: true
+      show_timestamp: true
+      include_severity: true
+      max_message_length: 3000
+      custom_prefix: "🚨 [SECURITY]"
+      custom_suffix: "Please review immediately"
+      severity_colors:
+        critical: "🔴"
+        high: "🟠"
+        medium: "🟡"
+        low: "🟢"
+        unknown: "⚪"
+
+  # Mattermost Configuration
+  mattermost:
+    enabled: false
+    server_url: "https://your-mattermost-server.com"
+    token: "your-mattermost-bot-token"
+    channel: "security-alerts"
+    team: "your-team-name"
+    timeout: "5s"
+    rate_per_minute: 60
+    debug: true
+    username: "Harbor Security Bot"
+    icon_emoji: ":shield:"
+    icon_url: ""
+    unfurl_links: true
+    unfurl_media: true
+    markdown: true
+    create_channel: false
+    channel_type: "public"
+    message_format:
+      escape_markdown: false
+      disable_web_preview: false
+      enable_html: true
+      show_timestamp: true
+      include_severity: true
+      max_message_length: 3000
+      custom_prefix: "🚨 [SECURITY]"
+      custom_suffix: "Please review immediately"
+      severity_colors:
+        critical: "🔴"
+        high: "🟠"
+        medium: "🟡"
+        low: "🟢"
+        unknown: "⚪"
+    webhook:
+      enabled: false
+      url: "https://your-mattermost-server.com/hooks/your-webhook-url"
+      secret_token: "your-webhook-secret"
+      max_connections: 10
+      allowed_updates: []
 
 # Processing Configuration
 processing:
@@ -143,11 +164,14 @@ observability:
     level: "info"
     format: "json"
 
+# Templates Configuration
+templates:
+  enabled: true
+  path: "/etc/notifier/templates"
+
 ---
 
 # Example: Gmail Configuration
-# Copy this section and modify as needed
-
 notify:
   email:
     enabled: true
@@ -156,214 +180,18 @@ notify:
       host: "smtp.gmail.com"
       port: 587
       username: "your_email@gmail.com"
-      password: "your_app_password"  # Use App Password for Gmail
+      password: "your_app_password"
       from: "your_email@gmail.com"
       starttls: true
       timeout: "30s"
-      auth_type: "xoauth2"  # Recommended for Gmail
+      auth_type: "xoauth2"
       encryption: "tls"
     to:
       - "team@example.com"
 
 ---
 
-# Example: Microsoft Office 365 Configuration
-
-notify:
-  email:
-    enabled: true
-    subject_prefix: "[Office 365 Alert]"
-    smtp:
-      host: "smtp.office365.com"
-      port: 587
-      username: "your_email@company.com"
-      password: "your_password"
-      from: "your_email@company.com"
-      starttls: true
-      timeout: "30s"
-      auth_type: "login"  # Recommended for Office 365
-      encryption: "tls"
-    to:
-      - "security@company.com"
-
----
-
-# Example: Yahoo Mail Configuration
-
-notify:
-  email:
-    enabled: true
-    subject_prefix: "[Yahoo Alert]"
-    smtp:
-      host: "smtp.mail.yahoo.com"
-      port: 587
-      username: "your_email@yahoo.com"
-      password: "your_password"
-      from: "your_email@yahoo.com"
-      starttls: true
-      timeout: "30s"
-      auth_type: "plain"
-      encryption: "tls"
-    to:
-      - "admin@example.com"
-
----
-
-# Example: iCloud/Apple Configuration
-
-notify:
-  email:
-    enabled: true
-    subject_prefix: "[iCloud Alert]"
-    smtp:
-      host: "smtp.mail.me.com"
-      port: 587
-      username: "your_email@icloud.com"
-      password: "your_password"
-      from: "your_email@icloud.com"
-      starttls: true
-      timeout: "30s"
-      auth_type: "plain"
-      encryption: "tls"
-    to:
-      - "admin@example.com"
-
----
-
-# Example: Yandex Configuration
-
-notify:
-  email:
-    enabled: true
-    subject_prefix: "[Yandex Alert]"
-    smtp:
-      host: "smtp.yandex.ru"
-      port: 465
-      username: "your_email@yandex.ru"
-      password: "your_password"
-      from: "your_email@yandex.ru"
-      starttls: false
-      timeout: "30s"
-      auth_type: "plain"
-      encryption: "ssl"  # Yandex uses SSL on port 465
-    to:
-      - "admin@example.com"
-
----
-
-# Example: Zoho Configuration
-
-notify:
-  email:
-    enabled: true
-    subject_prefix: "[Zoho Alert]"
-    smtp:
-      host: "smtp.zoho.com"
-      port: 587
-      username: "your_email@zoho.com"
-      password: "your_password"
-      from: "your_email@zoho.com"
-      starttls: true
-      timeout: "30s"
-      auth_type: "plain"
-      encryption: "tls"
-    to:
-      - "admin@example.com"
-
----
-
-# Example: SendGrid Configuration
-
-notify:
-  email:
-    enabled: true
-    subject_prefix: "[SendGrid Alert]"
-    smtp:
-      host: "smtp.sendgrid.net"
-      port: 587
-      username: "apikey"
-      password: "your_sendgrid_api_key"
-      from: "your_email@example.com"
-      starttls: true
-      timeout: "30s"
-      auth_type: "plain"
-      encryption: "tls"
-    to:
-      - "admin@example.com"
-
----
-
-# Example: Custom SMTP Server with Advanced Settings
-
-notify:
-  email:
-    enabled: true
-    subject_prefix: "[Custom SMTP Alert]"
-    smtp:
-      host: "smtp.custom.com"
-      port: 25
-      username: "user@custom.com"
-      password: "secure_password"
-      from: "alerts@custom.com"
-      starttls: false
-      timeout: "30s"
-      auth_type: "plain"
-      encryption: "none"
-      
-      # Advanced SSL/TLS Settings
-      ssl_insecure: false
-      ssl_nocertcheck: false
-      ssl_noverify: false
-      ssl_noverify_hostname: false
-      ssl_noverify_ca: false
-      ssl_noverify_crl: false
-      ssl_noverify_ocsp: false
-      ssl_noverify_signature: false
-      ssl_noverify_ext_key_usage: false
-      ssl_noverify_key_usage: false
-      ssl_noverify_server_name: false
-      ssl_noverify_subject: false
-      ssl_noverify_sans: false
-      ssl_noverify_email: false
-      ssl_noverify_ip: false
-      ssl_noverify_dns: false
-      ssl_noverify_uris: false
-      ssl_noverify_other_names: false
-      ssl_noverify_all_names: false
-      ssl_noverify_any_name: false
-      ssl_noverify_no_names: false
-      ssl_noverify_no_sans: false
-      ssl_noverify_no_email: false
-      ssl_noverify_no_ip: false
-      ssl_noverify_no_dns: false
-      ssl_noverify_no_uris: false
-      ssl_noverify_no_other_names: false
-      ssl_noverify_no_all_names: false
-      ssl_noverify_no_any_name: false
-      ssl_noverify_no_no_names: false
-      ssl_noverify_no_no_sans: false
-      ssl_noverify_no_no_email: false
-      ssl_noverify_no_no_ip: false
-      ssl_noverify_no_no_dns: false
-      ssl_noverify_no_no_uris: false
-      ssl_noverify_no_no_other_names: false
-      ssl_noverify_no_no_all_names: false
-      ssl_noverify_no_no_any_name: false
-      ssl_noverify_no_no_no_names: false
-      
-      # HELO/EHLO Settings
-      helo_host: "mailserver.custom.com"
-      local_name: "harbor-notifier"
-      disable_helo: false
-      disable_starttls: false
-    to:
-      - "security@example.com"
-      - "devops@example.com"
-
----
-
-# Example: Slack Configuration with Webhook Integration
-
+# Example: Slack Configuration
 notify:
   slack:
     enabled: true
@@ -378,7 +206,6 @@ notify:
     unfurl_links: true
     unfurl_media: true
     markdown: true
-    
     message_format:
       escape_markdown: false
       disable_web_preview: false
@@ -388,7 +215,6 @@ notify:
       max_message_length: 3000
       custom_prefix: "🚨 [SECURITY]"
       custom_suffix: "Please review immediately"
-      
       severity_colors:
         critical: "🔴"
         high: "🟠"
@@ -398,72 +224,43 @@ notify:
 
 ---
 
-# Example: Slack Configuration for Development Team
-
+# Example: Mattermost Configuration
 notify:
-  slack:
+  mattermost:
     enabled: true
-    token: "xoxb-dev-team-bot-token"
-    channel: "#dev-alerts"
-    timeout: "3s"
-    rate_per_minute: 120
-    debug: false
-    username: "Harbor Dev Notifier"
-    icon_emoji: ":information_source:"
-    link_names: false
-    unfurl_links: false
-    unfurl_media: false
-    markdown: true
-    
-    message_format:
-      escape_markdown: true
-      disable_web_preview: true
-      enable_html: false
-      show_timestamp: false
-      include_severity: true
-      max_message_length: 2000
-      custom_prefix: ""
-      custom_suffix: ":thumbsup:"
-      
-      severity_colors:
-        critical: "💀"
-        high: "😱"
-        medium: "😟"
-        low: "😐"
-        unknown: "❓"
-
----
-
-# Example: Slack Configuration with Custom Icon URL
-
-notify:
-  slack:
-    enabled: true
-    token: "xoxb-custom-icon-bot-token"
-    channel: "#general"
+    server_url: "https://your-mattermost-server.com"
+    token: "your-mattermost-bot-token"
+    channel: "security-alerts"
+    team: "your-team-name"
     timeout: "5s"
-    rate_per_minute: 30
-    debug: false
-    username: "Harbor Enterprise"
-    icon_url: "https://example.com/harbor-logo.png"
-    link_names: false
+    rate_per_minute: 60
+    debug: true
+    username: "Harbor Security Bot"
+    icon_emoji: ":shield:"
+    icon_url: ""
     unfurl_links: true
     unfurl_media: true
     markdown: true
-    
+    create_channel: false
+    channel_type: "public"
     message_format:
-      escape_markdown: true
+      escape_markdown: false
       disable_web_preview: false
-      enable_html: false
+      enable_html: true
       show_timestamp: true
       include_severity: true
-      max_message_length: 4000
-      custom_prefix: "[🏴‍☠️ HARBOR]"
-      custom_suffix: ""
-      
+      max_message_length: 3000
+      custom_prefix: "🚨 [SECURITY]"
+      custom_suffix: "Please review immediately"
       severity_colors:
         critical: "🔴"
         high: "🟠"
         medium: "🟡"
         low: "🟢"
         unknown: "⚪"
+    webhook:
+      enabled: false
+      url: "https://your-mattermost-server.com/hooks/your-webhook-url"
+      secret_token: "your-webhook-secret"
+      max_connections: 10
+      allowed_updates: []

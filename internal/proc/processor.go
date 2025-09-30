@@ -240,9 +240,9 @@ func (p *HarborEventProcessor) enrichScanOverview(ctx context.Context, harborEve
 
 		// Convert ArtifactOverview to ScanOverview and aggregate
 		currentOverview := &harbor.ScanOverview{
-			Scanner:  artifactOverview.Scanner,
-			Summary:  make(map[string]int),
-			Status:   "success", // Assume success
+			Scanner:   artifactOverview.Scanner,
+			Summary:   make(map[string]int),
+			Status:    "success", // Assume success
 			Timestamp: time.Now(),
 		}
 		for severity, count := range artifactOverview.Summary {

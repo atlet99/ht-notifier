@@ -157,43 +157,43 @@ func TestTemplateFunctions(t *testing.T) {
 		},
 	}
 
-// Test template functions using the actual template manager
-// Create a template manager with default templates to get access to functions
-tmplManager, err := NewMessageTemplates(logger, formatConfig, config.TemplateConfig{
-	Enabled:    false, // Use default templates
-	Path:       "",
-	Reload:     false,
-	WatchFiles: false,
-})
-if err != nil {
-	t.Fatalf("Failed to create template manager: %v", err)
-}
-
-// Get the template functions map
-funcMap := tmplManager.TemplateFunctions()
-
-for _, tc := range testCases {
-	t.Run(tc.name, func(t *testing.T) {
-		// Create a template with the template manager's functions
-		tmpl := template.New("test").Funcs(funcMap)
-		tmpl, err = tmpl.Parse(tc.template)
-		if err != nil {
-			t.Fatalf("Failed to parse template: %v", err)
-		}
-
-		// Execute template
-		var buf bytes.Buffer
-		err = tmpl.Execute(&buf, tc.data)
-		if err != nil {
-			t.Fatalf("Failed to execute template: %v", err)
-		}
-
-		result := buf.String()
-		if result != tc.expected {
-			t.Errorf("Template execution failed: got %v, want %v", result, tc.expected)
-		}
+	// Test template functions using the actual template manager
+	// Create a template manager with default templates to get access to functions
+	tmplManager, err := NewMessageTemplates(logger, formatConfig, config.TemplateConfig{
+		Enabled:    false, // Use default templates
+		Path:       "",
+		Reload:     false,
+		WatchFiles: false,
 	})
-}
+	if err != nil {
+		t.Fatalf("Failed to create template manager: %v", err)
+	}
+
+	// Get the template functions map
+	funcMap := tmplManager.TemplateFunctions()
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Create a template with the template manager's functions
+			tmpl := template.New("test").Funcs(funcMap)
+			tmpl, err = tmpl.Parse(tc.template)
+			if err != nil {
+				t.Fatalf("Failed to parse template: %v", err)
+			}
+
+			// Execute template
+			var buf bytes.Buffer
+			err = tmpl.Execute(&buf, tc.data)
+			if err != nil {
+				t.Fatalf("Failed to execute template: %v", err)
+			}
+
+			result := buf.String()
+			if result != tc.expected {
+				t.Errorf("Template execution failed: got %v, want %v", result, tc.expected)
+			}
+		})
+	}
 }
 
 func TestFileTemplateLoading(t *testing.T) {

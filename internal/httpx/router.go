@@ -54,11 +54,11 @@ func (rww *responseWriterWrapper) Write(b []byte) (int, error) {
 // NewHandler creates a new HTTP handler with all routes and middlewares
 func NewHandler(cfg *config.Config, logger *zap.Logger, securityMgr *util.SecurityManager,
 	eventProcessor *proc.HarborEventProcessor, notifiers []notif.Notifier, healthChecker *health.HealthChecker) *Handler {
-	
+
 	// Create webhook metrics
 	webhookMetrics := &WebhookMetrics{
-		RequestsTotal: NewCounterVec([]string{"endpoint", "status"}),
-		ErrorsTotal:   NewCounterVec([]string{"endpoint", "error_type"}),
+		RequestsTotal:      NewCounterVec([]string{"endpoint", "status"}),
+		ErrorsTotal:        NewCounterVec([]string{"endpoint", "error_type"}),
 		ProcessingDuration: NewHistogramVec([]string{"endpoint"}),
 	}
 
@@ -155,13 +155,13 @@ func (h *Handler) applyMiddlewares() {
 func (h *Handler) loggingMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
-		
+
 		// Create a response writer to capture status code
 		wrappedWriter := &responseWriterWrapper{ResponseWriter: w}
-		
+
 		// Call next handler
 		next.ServeHTTP(wrappedWriter, r)
-		
+
 		// Log the request
 		h.logger.Info("HTTP request",
 			zap.String("method", r.Method),
@@ -185,7 +185,7 @@ func (h *Handler) hmacVerificationMiddleware(next http.Handler) http.Handler {
 				appErr.WithContext("method", r.Method)
 				appErr.WithContext("url", r.URL.String())
 				appErr.WithContext("remote_addr", r.RemoteAddr)
-				
+
 				h.errorLogger.LogError(appErr)
 				h.writeErrorResponse(w, r, appErr)
 				return
@@ -199,15 +199,15 @@ func (h *Handler) hmacVerificationMiddleware(next http.Handler) http.Handler {
 func (h *Handler) handleMetrics(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	
+
 	// Return basic metrics for now
 	// TODO: Integrate with Prometheus metrics
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"status": "metrics_available",
 		"endpoints": map[string]interface{}{
 			"webhook": map[string]interface{}{
-				"requests_total": h.webhookMetrics.RequestsTotal,
-				"errors_total":   h.webhookMetrics.ErrorsTotal,
+				"requests_total":      h.webhookMetrics.RequestsTotal,
+				"errors_total":        h.webhookMetrics.ErrorsTotal,
 				"processing_duration": h.webhookMetrics.ProcessingDuration,
 			},
 		},
@@ -254,7 +254,7 @@ func (h *Handler) metrics(w http.ResponseWriter, r *http.Request) {
 // harborWebhook handles Harbor webhook requests
 func (h *Handler) harborWebhook(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
-	
+
 	// Create context for error handling
 	ctx := r.Context()
 	contextData := map[string]interface{}{
@@ -263,7 +263,7 @@ func (h *Handler) harborWebhook(w http.ResponseWriter, r *http.Request) {
 		"remote": r.RemoteAddr,
 		"ctx":    ctx,
 	}
-	
+
 	// Create notification message from webhook data
 	msg := notif.Message{
 		Title:  "Harbor Scan Alert",
@@ -282,7 +282,7 @@ func (h *Handler) harborWebhook(w http.ResponseWriter, r *http.Request) {
 		err := h.circuitBreaker.Execute(func() error {
 			return notifier.Send(ctx, msg)
 		}, contextData)
-		
+
 		if err != nil {
 			sendErrors = append(sendErrors, err)
 			h.errorLogger.LogError(err, zap.String("notifier", notifier.Name()))
@@ -313,33 +313,33 @@ func (h *Handler) writeErrorResponse(w http.ResponseWriter, r *http.Request, err
 	if appErr, ok := err.(*errors.AppError); ok {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(appErr.HTTPStatus)
-		
+
 		response := map[string]interface{}{
-			"error":   appErr.Message,
-			"code":    appErr.Code,
-			"type":    string(appErr.Type),
+			"error":     appErr.Message,
+			"code":      appErr.Code,
+			"type":      string(appErr.Type),
 			"timestamp": appErr.Timestamp.Format(time.RFC3339),
 		}
-		
+
 		if appErr.Details != "" {
 			response["details"] = appErr.Details
 		}
-		
+
 		if len(appErr.Context) > 0 {
 			response["context"] = appErr.Context
 		}
-		
+
 		json.NewEncoder(w).Encode(response)
 		return
 	}
-	
+
 	// For non-app errors, return a generic internal error
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusInternalServerError)
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"error":   "Internal server error",
-		"code":    "internal_error",
-		"type":    "internal",
+		"error":     "Internal server error",
+		"code":      "internal_error",
+		"type":      "internal",
 		"timestamp": time.Now().UTC().Format(time.RFC3339),
 	})
 }

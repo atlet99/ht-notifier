@@ -106,7 +106,7 @@ func (t *MessageTemplates) loadFileTemplates() error {
 		// Create template with custom functions first
 		tmpl := template.New(templateName)
 		tmpl = t.addCustomFunctions(tmpl)
-		
+
 		// Parse template
 		tmpl, err = tmpl.Parse(string(content))
 		if err != nil {
@@ -322,7 +322,6 @@ func escapeMarkdown(text string) string {
 	text = strings.ReplaceAll(text, "]", "\\]")
 	return text
 }
-
 
 // TemplateFunctions returns the template functions map
 func (t *MessageTemplates) TemplateFunctions() template.FuncMap {

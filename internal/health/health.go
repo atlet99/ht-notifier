@@ -1,4 +1,3 @@
-
 package health
 
 import (
@@ -58,10 +57,10 @@ func (h *HealthChecker) Check(ctx context.Context) (Status, error) {
 	for _, checker := range h.checkers {
 		status, err := checker.Check(ctx)
 		if err != nil {
-			h.logger.Error("Health check failed", 
+			h.logger.Error("Health check failed",
 				zap.String("checker", checker.Name()),
 				zap.Error(err))
-			
+
 			overallStatus = StatusUnhealthy
 			details[checker.Name()] = map[string]interface{}{
 				"status":    "unhealthy",
@@ -109,7 +108,7 @@ func (h *HarborChecker) Name() string {
 // Check verifies Harbor connectivity
 func (h *HarborChecker) Check(ctx context.Context) (Status, error) {
 	start := time.Now()
-	
+
 	// Try to make a simple request to test connectivity
 	// We'll try to get project info with a dummy ID to test the API
 	_, err := h.client.GetProject(ctx, 1) // Use project ID 1 for testing
@@ -117,8 +116,8 @@ func (h *HarborChecker) Check(ctx context.Context) (Status, error) {
 		// If project 1 doesn't exist, that's okay - we just want to test connectivity
 		// Check if it's a connection error vs a "not found" error
 		if contains(err.Error(), "connection refused") ||
-		   contains(err.Error(), "timeout") ||
-		   contains(err.Error(), "no such host") {
+			contains(err.Error(), "timeout") ||
+			contains(err.Error(), "no such host") {
 			return Status{
 				Status:    StatusUnhealthy,
 				Message:   "Failed to connect to Harbor",
@@ -147,9 +146,9 @@ func (h *HarborChecker) Check(ctx context.Context) (Status, error) {
 // contains checks if a string contains a substring (case-insensitive)
 func contains(s, substr string) bool {
 	return len(s) >= len(substr) &&
-		   (s == substr ||
-		    (len(s) > len(substr) &&
-		     (strings.Contains(strings.ToLower(s), strings.ToLower(substr)))))
+		(s == substr ||
+			(len(s) > len(substr) &&
+				(strings.Contains(strings.ToLower(s), strings.ToLower(substr)))))
 }
 
 // NotifierChecker checks notifier connectivity
@@ -186,14 +185,14 @@ func (h *NotifierChecker) Check(ctx context.Context) (Status, error) {
 
 	for _, notifier := range h.notifiers {
 		notifierName := notifier.Name()
-		
+
 		// For now, just check if the notifier can be instantiated
 		// In a real implementation, you might send a test message
 		err := notifier.Send(ctx, notif.Message{
-			Title:   "Health Check",
-			Body:    "This is a test message to verify notifier connectivity",
-			Link:    "",
-			Labels:  map[string]string{"source": "health-check"},
+			Title:  "Health Check",
+			Body:   "This is a test message to verify notifier connectivity",
+			Link:   "",
+			Labels: map[string]string{"source": "health-check"},
 			Metadata: map[string]interface{}{
 				"timestamp": time.Now().UTC(),
 			},
@@ -203,7 +202,7 @@ func (h *NotifierChecker) Check(ctx context.Context) (Status, error) {
 			h.logger.Warn("Notifier health check failed",
 				zap.String("notifier", notifierName),
 				zap.Error(err))
-			
+
 			details[notifierName] = map[string]interface{}{
 				"status": "unhealthy",
 				"error":  err.Error(),
@@ -268,7 +267,7 @@ func (h *SystemChecker) Check(ctx context.Context) (Status, error) {
 		Sys        uint64 `json:"sys"`
 		NumGC      uint32 `json:"num_gc"`
 	}
-	
+
 	// In a real implementation, you would use runtime.ReadMemStats
 	// For now, we'll just return a healthy status
 	memStats.Alloc = 1024 * 1024 * 10 // 10MB as example
@@ -388,8 +387,8 @@ func (h *ConfigChecker) Check(ctx context.Context) (Status, error) {
 		Message:   "Configuration is valid",
 		Timestamp: time.Now().UTC(),
 		Details: map[string]interface{}{
-			"server_addr":      h.config.Server.Addr,
-			"harbor_base_url":  h.config.Harbor.BaseURL,
+			"server_addr":       h.config.Server.Addr,
+			"harbor_base_url":   h.config.Harbor.BaseURL,
 			"enabled_notifiers": h.config.GetEnabledNotifiers(),
 		},
 	}, nil
@@ -422,7 +421,7 @@ func (h *HTTPHandler) Healthz(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	
+
 	// Set HTTP status code based on health status
 	var statusCode int
 	switch status.Status {
@@ -445,7 +444,7 @@ func (h *HTTPHandler) Readyz(w http.ResponseWriter, r *http.Request) {
 
 	// For readiness checks, we focus on critical dependencies only
 	readinessChecker := NewHealthChecker(h.logger)
-	
+
 	// Add critical checks
 	if h.healthChecker.checkers != nil {
 		for _, checker := range h.healthChecker.checkers {
@@ -465,7 +464,7 @@ func (h *HTTPHandler) Readyz(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	
+
 	// Set HTTP status code based on readiness status
 	var statusCode int
 	switch status.Status {
@@ -480,4 +479,3 @@ func (h *HTTPHandler) Readyz(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(statusCode)
 	json.NewEncoder(w).Encode(status)
 }
-	
