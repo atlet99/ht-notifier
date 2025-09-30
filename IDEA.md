@@ -2,7 +2,7 @@
 
 ## Overview
 
-A production-ready Go service that receives Harbor registry webhook events (SCANNING_COMPLETED/SCANNING_FAILED), optionally enriches them with detailed scan results from Harbor API, and sends formatted notifications to Telegram, Email (SMTP), and Slack.
+A production-ready Go service that receives Harbor registry webhook events (SCANNING_COMPLETED/SCANNING_FAILED), optionally enriches them with detailed scan results from Harbor API, and sends formatted notifications to Telegram, Email (SMTP), Slack, and Mattermost.
 
 ## ✅ IMPLEMENTATION STATUS
 
@@ -44,6 +44,7 @@ A production-ready Go service that receives Harbor registry webhook events (SCAN
 - [x] **Email (SMTP)** with go-mail library, HTML templates, multiple auth types
 - [x] **Telegram** with go-telegram/bot, Markdown formatting, rate limiting
 - [x] **Slack** with slack-go, attachments, rich formatting
+- [x] **Mattermost** with mattermost-client, webhook integration, rich formatting
 - [x] **Template-based message formatting** with custom templates
 - [x] **Rate limiting** per notification target
 - [x] **Retry logic** with exponential backoff
@@ -116,7 +117,7 @@ A production-ready Go service that receives Harbor registry webhook events (SCAN
 ### Extensibility ✅ IMPLEMENTED
 - [x] **Interface-based notifier design** (`internal/notif/notifier.go`)
 - [x] **Template-based message formatting** with custom templates (`internal/notif/templates.go`)
-- [x] **Easy to add new notification targets** (Slack, MS Teams, etc.)
+- [x] **Easy to add new notification targets** (Slack, Mattermost, etc.)
 
 ## Target Payloads
 
@@ -424,7 +425,7 @@ Key metrics to expose:
 - [ ] **Security testing** for vulnerability scanning
 
 ### ⏳ Pending Enhancements
-- [ ] **MSTeams notification target** - Microsoft Teams webhook integration
+- [ ] **Mattermost notification target** - Mattermost webhook integration (enhanced)
 - [ ] **CSV export attachments** for email (size-limited)
 - [ ] **Policy engine**: alerts only for `Critical>0` or `High>=N`
 - [ ] **Per-project routing** (different chats/email lists)
@@ -489,6 +490,7 @@ make docker
 - **Email**: github.com/wneessen/go-mail with HTML templates and multiple auth types
 - **Telegram**: go-telegram/bot with Markdown formatting and rate limiting
 - **Slack**: slack-go with rich formatting and attachments
+- **Mattermost**: mattermost-client with webhook integration and rich formatting
 - **Templates**: text/template with custom functions and hot reload
 
 ### Data Processing
