@@ -47,3 +47,7 @@ github_api_extractor.go
 
 # Slack API Extractor
 slack_api_extractor.go
+
+# Config file
+config.yaml
+config.yml
