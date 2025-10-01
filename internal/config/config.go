@@ -108,6 +108,12 @@ type SlackConfig struct {
 	UnfurlLinks   bool                `yaml:"unfurl_links"`
 	UnfurlMedia   bool                `yaml:"unfurl_media"`
 	Markdown      bool                `yaml:"markdown"`
+	EnableBlocks  bool                `yaml:"enable_blocks"`
+	EnableInteractive bool            `yaml:"enable_interactive"`
+	ThreadTS      string              `yaml:"thread_ts"`
+	ReplyBroadcast bool               `yaml:"reply_broadcast"`
+	EnableReactions bool              `yaml:"enable_reactions"`
+	EnableScheduling bool             `yaml:"enable_scheduling"`
 }
 
 type MattermostConfig struct {
@@ -409,6 +415,10 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("notify.slack.unfurl_links", false)
 	v.SetDefault("notify.slack.unfurl_media", false)
 	v.SetDefault("notify.slack.markdown", true)
+	v.SetDefault("notify.slack.enable_blocks", true)
+	v.SetDefault("notify.slack.enable_interactive", true)
+	v.SetDefault("notify.slack.thread_ts", "")
+	v.SetDefault("notify.slack.reply_broadcast", false)
 
 	// Slack message format configuration
 	v.SetDefault("notify.slack.message_format.escape_markdown", true)
@@ -432,6 +442,14 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("notify.slack.templates.path", "")
 	v.SetDefault("notify.slack.templates.reload", false)
 	v.SetDefault("notify.slack.templates.watch_files", false)
+
+	// Slack advanced features
+	v.SetDefault("notify.slack.enable_blocks", false)
+	v.SetDefault("notify.slack.enable_interactive", false)
+	v.SetDefault("notify.slack.thread_ts", "")
+	v.SetDefault("notify.slack.reply_broadcast", false)
+	v.SetDefault("notify.slack.enable_reactions", false)
+	v.SetDefault("notify.slack.enable_scheduling", false)
 
 	// Mattermost notification configuration
 	v.SetDefault("notify.mattermost.enabled", false)
