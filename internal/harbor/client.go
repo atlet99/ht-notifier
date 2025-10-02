@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 
+	"go.uber.org/zap"
 	"github.com/atlet99/ht-notifier/internal/config"
 )
 
@@ -19,11 +20,11 @@ type Client struct {
 	httpClient *http.Client
 	username   string
 	password   string
-	logger     interface{} // TODO: Replace with proper logger interface
+	logger     *zap.Logger
 }
 
 // NewClient creates a new Harbor API client
-func NewClient(cfg config.HarborConfig, httpClient *http.Client, logger interface{}) (*Client, error) {
+func NewClient(cfg config.HarborConfig, httpClient *http.Client, logger *zap.Logger) (*Client, error) {
 	// Parse base URL
 	baseURL, err := url.Parse(cfg.BaseURL)
 	if err != nil {

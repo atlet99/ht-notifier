@@ -33,6 +33,16 @@ type Handler struct {
 	circuitBreaker *errors.CircuitBreaker
 }
 
+// AuthConfig holds authentication configuration for webhook endpoints
+type AuthConfig struct {
+	APIKeyHeader     string   `yaml:"api_key_header"`     // Header name for API key authentication
+	APIKey           string   `yaml:"api_key"`           // API key for authentication
+	JWTSecret        string   `yaml:"jwt_secret"`        // JWT secret for token validation
+	AllowedIPs       []string `yaml:"allowed_ips"`      // List of allowed IP addresses/CIDRs
+	EnableHMAC       bool     `yaml:"enable_hmac"`       // Enable HMAC signature verification
+	RequireAuth      bool     `yaml:"require_auth"`      // Require authentication for all requests
+}
+
 // responseWriterWrapper wraps http.ResponseWriter to capture status code
 type responseWriterWrapper struct {
 	http.ResponseWriter
@@ -60,6 +70,16 @@ func NewHandler(cfg *config.Config, logger *zap.Logger, securityMgr *util.Securi
 	// Create metrics
 	webhookMetrics := obs.NewMetrics(prometheus.DefaultRegisterer, "ht_notifier")
 
+	// Create authentication config
+	authConfig := AuthConfig{
+		APIKeyHeader:     cfg.Server.HMACSecret,
+		APIKey:           cfg.Server.HMACSecret,
+		JWTSecret:        "", // Can be configured via environment variable
+		AllowedIPs:       cfg.Server.IPAllowlist,
+		EnableHMAC:       true,
+		RequireAuth:      len(cfg.Server.HMACSecret) > 0,
+	}
+
 	// Create webhook handler
 	webhookHandler := NewWebhookHandler(
 		securityMgr,
@@ -67,6 +87,7 @@ func NewHandler(cfg *config.Config, logger *zap.Logger, securityMgr *util.Securi
 		logger,
 		cfg.Server.MaxRequestSize,
 		webhookMetrics,
+		authConfig,
 	)
 
 	// Initialize error handling components

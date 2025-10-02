@@ -1,8 +1,15 @@
 package config
 
 import (
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/url"
 	"os"
@@ -233,6 +240,127 @@ type LogConfig struct {
 	Format string `yaml:"format"`
 }
 
+// DefaultConfig returns a default configuration
+func DefaultConfig() *Config {
+	return &Config{
+		Server: ServerConfig{
+			Addr:              ":8080",
+			BasePath:          "/",
+			ReadHeaderTimeout: 5 * time.Second,
+			ShutdownTimeout:   10 * time.Second,
+			MaxRequestSize:    1024 * 1024,
+			RateLimit:         100,
+			RateLimitBurst:    20,
+		},
+		Harbor: HarborConfig{
+			BaseURL:  "https://harbor.local",
+			Username: "admin",
+			Timeout:  30 * time.Second,
+		},
+		Notify: NotifyConfig{
+			Telegram: TelegramConfig{
+				Enabled:       false,
+				Timeout:       5 * time.Second,
+				RatePerMinute: 30,
+				Debug:         false,
+				MessageFormat: MessageFormatConfig{
+					EscapeMarkdown:    true,
+					DisableWebPreview: true,
+					EnableHTML:        false,
+					ShowTimestamp:     true,
+					IncludeSeverity:   true,
+					MaxMessageLength:  4096,
+					SeverityColors: SeverityColors{
+						Critical: "🔴",
+						High:     "🟠",
+						Medium:   "🟡",
+						Low:      "🟢",
+						Unknown:  "⚪",
+					},
+				},
+			},
+			Email: EmailConfig{
+				Enabled: false,
+				SMTP: SMTPConfig{
+					Port:     587,
+					StartTLS: true,
+					Timeout:  30 * time.Second,
+					AuthType: "plain",
+					Encryption: "tls",
+				},
+				SubjectPrefix: "[Harbor Alert]",
+			},
+			Slack: SlackConfig{
+				Enabled: false,
+				Timeout: 5 * time.Second,
+				RatePerMinute: 30,
+				Debug:   false,
+				Username: "Harbor Notifier",
+				IconEmoji: ":warning:",
+				MessageFormat: MessageFormatConfig{
+					EscapeMarkdown:    true,
+					DisableWebPreview: false,
+					EnableHTML:        false,
+					ShowTimestamp:     true,
+					IncludeSeverity:   true,
+					MaxMessageLength:  4000,
+					SeverityColors: SeverityColors{
+						Critical: "🔴",
+						High:     "🟠",
+						Medium:   "🟡",
+						Low:      "🟢",
+						Unknown:  "⚪",
+					},
+				},
+			},
+			Mattermost: MattermostConfig{
+				Enabled: false,
+				Timeout: 5 * time.Second,
+				RatePerMinute: 30,
+				Debug:   false,
+				Username: "Harbor Notifier",
+				IconEmoji: ":warning:",
+				ChannelType: "public",
+				MessageFormat: MessageFormatConfig{
+					EscapeMarkdown:    true,
+					DisableWebPreview: false,
+					EnableHTML:        false,
+					ShowTimestamp:     true,
+					IncludeSeverity:   true,
+					MaxMessageLength:  4000,
+					SeverityColors: SeverityColors{
+						Critical: "🔴",
+						High:     "🟠",
+						Medium:   "🟡",
+						Low:      "🟢",
+						Unknown:  "⚪",
+					},
+				},
+			},
+		},
+		Processing: ProcessingConfig{
+			EnrichViaHarborAPI: true,
+			MaxConcurrency:     8,
+			MaxQueue:           1024,
+			Retry: RetryConfig{
+				MaxAttempts:    8,
+				InitialBackoff: 1 * time.Second,
+				MaxBackoff:     2 * time.Minute,
+			},
+		},
+		Observability: ObservabilityConfig{
+			MetricsAddr: ":9090",
+			Log: LogConfig{
+				Level:  "info",
+				Format: "json",
+			},
+		},
+		Templates: TemplateConfig{
+			Enabled: false,
+		},
+	}
+}
+
 // Load loads configuration from multiple sources with .env support
 func Load(configPath string) (*Config, error) {
 	v := viper.New()
@@ -268,7 +396,254 @@ func Load(configPath string) (*Config, error) {
 		return nil, fmt.Errorf("failed to unmarshal config: %w", err)
 	}
 
+	// Decrypt sensitive configuration data
+	if err := cfg.decryptSensitiveData(); err != nil {
+		return nil, fmt.Errorf("failed to decrypt sensitive data: %w", err)
+	}
+
 	return &cfg, nil
+}
+
+// decryptSensitiveData decrypts sensitive configuration fields
+func (c *Config) decryptSensitiveData() error {
+	// Get encryption key from environment or generate one
+	encryptionKey := getEncryptionKey()
+	if encryptionKey == "" {
+		// If no encryption key is provided, skip decryption
+		// This allows backward compatibility
+		return nil
+	}
+
+	// Decrypt Harbor password
+	if c.Harbor.Password != "" {
+		decrypted, err := decrypt(c.Harbor.Password, encryptionKey)
+		if err != nil {
+			return fmt.Errorf("failed to decrypt Harbor password: %w", err)
+		}
+		c.Harbor.Password = decrypted
+	}
+
+	// Decrypt Telegram bot token
+	if c.Notify.Telegram.BotToken != "" {
+		decrypted, err := decrypt(c.Notify.Telegram.BotToken, encryptionKey)
+		if err != nil {
+			return fmt.Errorf("failed to decrypt Telegram bot token: %w", err)
+		}
+		c.Notify.Telegram.BotToken = decrypted
+	}
+
+	// Decrypt Slack token
+	if c.Notify.Slack.Token != "" {
+		decrypted, err := decrypt(c.Notify.Slack.Token, encryptionKey)
+		if err != nil {
+			return fmt.Errorf("failed to decrypt Slack token: %w", err)
+		}
+		c.Notify.Slack.Token = decrypted
+	}
+
+	// Decrypt Mattermost token
+	if c.Notify.Mattermost.Token != "" {
+		decrypted, err := decrypt(c.Notify.Mattermost.Token, encryptionKey)
+		if err != nil {
+			return fmt.Errorf("failed to decrypt Mattermost token: %w", err)
+		}
+		c.Notify.Mattermost.Token = decrypted
+	}
+
+	// Decrypt SMTP credentials
+	if c.Notify.Email.SMTP.Password != "" {
+		decrypted, err := decrypt(c.Notify.Email.SMTP.Password, encryptionKey)
+		if err != nil {
+			return fmt.Errorf("failed to decrypt SMTP password: %w", err)
+		}
+		c.Notify.Email.SMTP.Password = decrypted
+	}
+
+	return nil
+}
+
+// encryptSensitiveData encrypts sensitive configuration fields
+func (c *Config) encryptSensitiveData() error {
+	// Get encryption key from environment or generate one
+	encryptionKey := getEncryptionKey()
+	if encryptionKey == "" {
+		// If no encryption key is provided, skip encryption
+		// This allows backward compatibility
+		return nil
+	}
+
+	// Encrypt Harbor password
+	if c.Harbor.Password != "" {
+		encrypted, err := encrypt(c.Harbor.Password, encryptionKey)
+		if err != nil {
+			return fmt.Errorf("failed to encrypt Harbor password: %w", err)
+		}
+		c.Harbor.Password = encrypted
+	}
+
+	// Encrypt Telegram bot token
+	if c.Notify.Telegram.BotToken != "" {
+		encrypted, err := encrypt(c.Notify.Telegram.BotToken, encryptionKey)
+		if err != nil {
+			return fmt.Errorf("failed to encrypt Telegram bot token: %w", err)
+		}
+		c.Notify.Telegram.BotToken = encrypted
+	}
+
+	// Encrypt Slack token
+	if c.Notify.Slack.Token != "" {
+		encrypted, err := encrypt(c.Notify.Slack.Token, encryptionKey)
+		if err != nil {
+			return fmt.Errorf("failed to encrypt Slack token: %w", err)
+		}
+		c.Notify.Slack.Token = encrypted
+	}
+
+	// Encrypt Mattermost token
+	if c.Notify.Mattermost.Token != "" {
+		encrypted, err := encrypt(c.Notify.Mattermost.Token, encryptionKey)
+		if err != nil {
+			return fmt.Errorf("failed to encrypt Mattermost token: %w", err)
+		}
+		c.Notify.Mattermost.Token = encrypted
+	}
+
+	// Encrypt SMTP credentials
+	if c.Notify.Email.SMTP.Password != "" {
+		encrypted, err := encrypt(c.Notify.Email.SMTP.Password, encryptionKey)
+		if err != nil {
+			return fmt.Errorf("failed to encrypt SMTP password: %w", err)
+		}
+		c.Notify.Email.SMTP.Password = encrypted
+	}
+
+	return nil
+}
+
+// getEncryptionKey returns the encryption key from environment or generates one
+func getEncryptionKey() string {
+	key := os.Getenv("CONFIG_ENCRYPTION_KEY")
+	if key == "" {
+		// For backward compatibility, check for older environment variable names
+		key = os.Getenv("ENCRYPTION_KEY")
+		if key == "" {
+			// If no key is provided, return empty string to skip encryption
+			return ""
+		}
+	}
+	return key
+}
+
+// encrypt encrypts data using AES-GCM
+func encrypt(plaintext, key string) (string, error) {
+	if plaintext == "" {
+		return "", nil
+	}
+
+	// Derive key from the provided key using SHA-256
+	hashedKey := sha256.Sum256([]byte(key))
+	block, err := aes.NewCipher(hashedKey[:])
+	if err != nil {
+		return "", err
+	}
+
+	// Create GCM mode
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return "", err
+	}
+
+	// Create a nonce
+	nonce := make([]byte, gcm.NonceSize())
+	if _, err = io.ReadFull(rand.Reader, nonce); err != nil {
+		return "", err
+	}
+
+	// Encrypt the data
+	ciphertext := gcm.Seal(nonce, nonce, []byte(plaintext), nil)
+
+	// Return base64 encoded encrypted data
+	return base64.StdEncoding.EncodeToString(ciphertext), nil
+}
+
+// decrypt decrypts data using AES-GCM
+func decrypt(ciphertext, key string) (string, error) {
+	if ciphertext == "" {
+		return "", nil
+	}
+
+	// Decode base64 encrypted data
+	encryptedData, err := base64.StdEncoding.DecodeString(ciphertext)
+	if err != nil {
+		return "", err
+	}
+
+	// Derive key from the provided key using SHA-256
+	hashedKey := sha256.Sum256([]byte(key))
+	block, err := aes.NewCipher(hashedKey[:])
+	if err != nil {
+		return "", err
+	}
+
+	// Create GCM mode
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return "", err
+	}
+
+	// Extract nonce from the encrypted data
+	nonceSize := gcm.NonceSize()
+	if len(encryptedData) < nonceSize {
+		return "", errors.New("ciphertext too short")
+	}
+
+	nonce, encryptedData := encryptedData[:nonceSize], encryptedData[nonceSize:]
+
+	// Decrypt the data
+	plaintext, err := gcm.Open(nil, nonce, encryptedData, nil)
+	if err != nil {
+		return "", err
+	}
+
+	return string(plaintext), nil
+}
+
+// MaskSensitiveData creates a copy of the config with sensitive data masked
+func (c *Config) MaskSensitiveData() *Config {
+	masked := *c // Create a shallow copy
+
+	// Mask Harbor password
+	if masked.Harbor.Password != "" {
+		masked.Harbor.Password = "****"
+	}
+
+	// Mask Telegram bot token
+	if masked.Notify.Telegram.BotToken != "" {
+		masked.Notify.Telegram.BotToken = "****"
+	}
+
+	// Mask Slack token
+	if masked.Notify.Slack.Token != "" {
+		masked.Notify.Slack.Token = "****"
+	}
+
+	// Mask Mattermost token
+	if masked.Notify.Mattermost.Token != "" {
+		masked.Notify.Mattermost.Token = "****"
+	}
+
+	// Mask SMTP credentials
+	if masked.Notify.Email.SMTP.Password != "" {
+		masked.Notify.Email.SMTP.Password = "****"
+	}
+
+	return &masked
+}
+
+// ToJSON returns the configuration as JSON with sensitive data masked
+func (c *Config) ToJSON() ([]byte, error) {
+	masked := c.MaskSensitiveData()
+	return json.MarshalIndent(masked, "", "  ")
 }
 
 // getEnvPath returns the path to the .env file

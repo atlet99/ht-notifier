@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/atlet99/ht-notifier/internal/harbor"
@@ -22,6 +24,7 @@ type WebhookHandler struct {
 	logger          *zap.Logger
 	maxRequestSize  int64
 	metrics         *obs.Metrics
+	authConfig      AuthConfig
 }
 
 // NewWebhookHandler creates a new webhook handler
@@ -31,6 +34,7 @@ func NewWebhookHandler(
 	logger *zap.Logger,
 	maxRequestSize int64,
 	metrics *obs.Metrics,
+	authConfig AuthConfig,
 ) *WebhookHandler {
 	return &WebhookHandler{
 		securityManager: securityManager,
@@ -38,6 +42,7 @@ func NewWebhookHandler(
 		logger:          logger,
 		maxRequestSize:  maxRequestSize,
 		metrics:         metrics,
+		authConfig:      authConfig,
 	}
 }
 
@@ -75,15 +80,16 @@ func (h *WebhookHandler) HandleHarborWebhook(w http.ResponseWriter, r *http.Requ
 	}
 	defer r.Body.Close()
 
-	// Verify HMAC signature
-	if !h.securityManager.VerifyHMAC(r) {
-		h.logger.Error("HMAC verification failed",
+	// Verify authentication
+	if err := h.authenticateRequest(r); err != nil {
+		h.logger.Error("Authentication failed",
 			zap.String("remote_addr", r.RemoteAddr),
 			zap.String("method", r.Method),
-			zap.String("path", r.URL.Path))
+			zap.String("path", r.URL.Path),
+			zap.Error(err))
 
 		h.metrics.RecordHarborAPIError("webhook", 401)
-		http.Error(w, "Unauthorized - Invalid HMAC signature", http.StatusUnauthorized)
+		http.Error(w, "Unauthorized - "+err.Error(), http.StatusUnauthorized)
 		return
 	}
 
@@ -150,7 +156,7 @@ func (h *WebhookHandler) HandleTestWebhook(w http.ResponseWriter, r *http.Reques
 	h.logger.Info("Test webhook request received",
 		zap.String("remote_addr", r.RemoteAddr))
 
-	// For test requests, we don't require HMAC verification
+	// For test requests, we don't require authentication
 	// but we still validate the basic structure
 
 	body, err := io.ReadAll(r.Body)
@@ -208,6 +214,103 @@ func (h *WebhookHandler) validateWebhookEvent(event *harbor.Event) error {
 	}
 
 	return nil
+}
+
+// authenticateRequest authenticates the incoming request
+func (h *WebhookHandler) authenticateRequest(r *http.Request) error {
+	// If authentication is not required, skip checks
+	if !h.authConfig.RequireAuth {
+		return nil
+	}
+
+	// Check IP allowlist
+	if len(h.authConfig.AllowedIPs) > 0 {
+		if !h.isIPAllowed(r.RemoteAddr) {
+			return fmt.Errorf("IP address not allowed: %s", r.RemoteAddr)
+		}
+	}
+
+	// Check API key authentication
+	if h.authConfig.APIKey != "" && h.authConfig.APIKeyHeader != "" {
+		if r.Header.Get(h.authConfig.APIKeyHeader) != h.authConfig.APIKey {
+			return fmt.Errorf("invalid API key")
+		}
+	}
+
+	// Check JWT token
+	if h.authConfig.JWTSecret != "" {
+		authHeader := r.Header.Get("Authorization")
+		if authHeader == "" {
+			return fmt.Errorf("missing authorization header")
+		}
+		
+		if !h.validateJWTToken(authHeader) {
+			return fmt.Errorf("invalid JWT token")
+		}
+	}
+
+	// Verify HMAC signature if enabled
+	if h.authConfig.EnableHMAC {
+		if !h.securityManager.VerifyHMAC(r) {
+			return fmt.Errorf("invalid HMAC signature")
+		}
+	}
+
+	return nil
+}
+
+// isIPAllowed checks if the IP address is in the allowed list
+func (h *WebhookHandler) isIPAllowed(remoteAddr string) bool {
+	// Extract IP from address (remove port)
+	ip := strings.Split(remoteAddr, ":")[0]
+	
+	for _, allowedIP := range h.authConfig.AllowedIPs {
+		// Check for exact match first
+		if ip == allowedIP {
+			return true
+		}
+		
+		// Check for CIDR notation
+		if strings.Contains(allowedIP, "/") {
+			_, ipNet, err := net.ParseCIDR(allowedIP)
+			if err != nil {
+				h.logger.Error("Invalid CIDR format in allowed IPs",
+					zap.String("cidr", allowedIP),
+					zap.Error(err))
+				continue
+			}
+			
+			if ipNet.Contains(net.ParseIP(ip)) {
+				return true
+			}
+		}
+	}
+	
+	return false
+}
+
+// validateJWTToken validates a JWT token from the Authorization header
+func (h *WebhookHandler) validateJWTToken(authHeader string) bool {
+	// Extract token from "Bearer <token>" format
+	if !strings.HasPrefix(authHeader, "Bearer ") {
+		return false
+	}
+	
+	token := strings.TrimPrefix(authHeader, "Bearer ")
+	
+	// Simple JWT validation - in production, use a proper JWT library
+	// This is a basic implementation for demonstration
+	if len(token) < 10 {
+		return false
+	}
+	
+	// In a real implementation, you would:
+	// 1. Parse the JWT token
+	// 2. Verify the signature using the secret
+	// 3. Check expiration and claims
+	// 4. Validate the token against expected claims
+	
+	return true
 }
 
 // Helper function to get minimum of two integers
