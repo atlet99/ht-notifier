@@ -51,3 +51,4 @@ slack_api_extractor.go
 # Config file
 config.yaml
 config.yml
+*-config.yaml

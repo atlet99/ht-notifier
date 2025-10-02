@@ -23,6 +23,7 @@ type Email struct {
 	subject     string
 	prefix      string
 	limiter     RateLimiter
+	metrics     NotifierMetrics
 }
 
 // NewEmail creates a new email notifier using go-mail with enhanced authentication and SSL support
@@ -120,14 +121,18 @@ func NewEmail(cfg config.EmailConfig, limiter RateLimiter) (*Email, error) {
 		subject:     cfg.SubjectPrefix,
 		prefix:      cfg.SubjectPrefix,
 		limiter:     limiter,
+		metrics:     NotifierMetrics{},
 	}, nil
 }
 
 // Send implements the Notifier interface using go-mail
 func (e *Email) Send(ctx context.Context, msg Message) error {
+	start := time.Now()
+
 	// Apply rate limiting if configured
 	if e.limiter != nil {
 		if err := e.limiter.Wait(ctx); err != nil {
+			e.recordFailure(err)
 			return fmt.Errorf("rate limiter wait failed: %w", err)
 		}
 	}
@@ -138,16 +143,19 @@ func (e *Email) Send(ctx context.Context, msg Message) error {
 	// Prepare email body
 	body, err := e.formatBody(msg)
 	if err != nil {
+		e.recordFailure(err)
 		return fmt.Errorf("failed to format email body: %w", err)
 	}
 
 	// Create new message
 	m := mail.NewMsg()
 	if err := m.From(e.from); err != nil {
+		e.recordFailure(err)
 		return fmt.Errorf("failed to set from address: %w", err)
 	}
 
 	if err := m.To(e.to...); err != nil {
+		e.recordFailure(err)
 		return fmt.Errorf("failed to set recipients: %w", err)
 	}
 
@@ -156,9 +164,11 @@ func (e *Email) Send(ctx context.Context, msg Message) error {
 
 	// Send email
 	if err := e.client.Send(m); err != nil {
+		e.recordFailure(err)
 		return fmt.Errorf("failed to send email: %w", err)
 	}
 
+	e.recordSuccess(time.Since(start))
 	return nil
 }
 
@@ -308,6 +318,25 @@ func (e *Email) SendWithTemplate(ctx context.Context, msg Message, templateName 
 // Name returns the name of this notifier
 func (e *Email) Name() string {
 	return "email"
+}
+
+// GetMetrics returns the metrics for this notifier
+func (e *Email) GetMetrics() *NotifierMetrics {
+	return &e.metrics
+}
+
+// recordSuccess records a successful notification
+func (e *Email) recordSuccess(duration time.Duration) {
+	e.metrics.TotalSent++
+	e.metrics.LastSent = time.Now()
+	e.metrics.LastDuration = duration
+	e.metrics.AvgDuration = time.Duration((int64(e.metrics.AvgDuration)*e.metrics.TotalSent + int64(duration)) / (e.metrics.TotalSent + 1))
+}
+
+// recordFailure records a failed notification
+func (e *Email) recordFailure(err error) {
+	e.metrics.TotalFailed++
+	e.metrics.LastFailed = time.Now()
 }
 
 // formatSubject formats the email subject based on message content

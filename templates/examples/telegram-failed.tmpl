@@ -1,0 +1,24 @@
+{{/* Advanced Telegram template for failed scan */}}
+{{.Title}}
+
+{{.Body}}
+
+❌ **Scan Failed** for repository: {{default "unknown" .Labels.repository}}
+
+{{if .SeverityCounts}}
+📊 **Previous Scan Results:**
+{{range $severity, $count := .SeverityCounts}}
+  {{- $icon := severityIcon $severity -}}
+  {{- printf "%s %s: %d" $icon (title $severity) $count -}}
+  {{- if gt $count 0}} 🔥{{end}}
+  {{- "\n" -}}
+{{end}}
+{{end}}
+
+{{if .Link}}
+🔗 **View in Harbor:** {{.Link}}
+{{end}}
+
+{{if .ShowTimestamp}}
+⏰ **Timestamp:** {{formatTimestamp .Timestamp}}
+{{end}}

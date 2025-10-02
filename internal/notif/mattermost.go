@@ -24,6 +24,7 @@ type Mattermost struct {
 	messageFormat       MattermostMessageFormat
 	shouldCreateChannel bool
 	channelType         string
+	metrics             NotifierMetrics
 }
 
 // MattermostMessageFormat defines the format for Mattermost messages
@@ -67,14 +68,18 @@ func NewMattermost(cfg config.MattermostConfig, limiter RateLimiter) (*Mattermos
 		messageFormat:       messageFormat,
 		shouldCreateChannel: cfg.CreateChannel,
 		channelType:         cfg.ChannelType,
+		metrics:             NotifierMetrics{},
 	}, nil
 }
 
 // Send implements the Notifier interface
 func (m *Mattermost) Send(ctx context.Context, msg Message) error {
+	start := time.Now()
+
 	// Apply rate limiting if configured
 	if m.limiter != nil {
 		if err := m.limiter.Wait(ctx); err != nil {
+			m.recordFailure(err)
 			return fmt.Errorf("rate limiter wait failed: %w", err)
 		}
 	}
@@ -100,12 +105,40 @@ func (m *Mattermost) Send(ctx context.Context, msg Message) error {
 	}
 
 	// Send the message
-	return m.createPost(ctx, postPayload)
+	err := m.createPost(ctx, postPayload)
+	duration := time.Since(start)
+
+	if err != nil {
+		m.recordFailure(err)
+		return err
+	}
+
+	m.recordSuccess(duration)
+	return nil
 }
 
 // Name returns the name of this notifier
 func (m *Mattermost) Name() string {
 	return "mattermost"
+}
+
+// GetMetrics returns the metrics for this notifier
+func (m *Mattermost) GetMetrics() *NotifierMetrics {
+	return &m.metrics
+}
+
+// recordSuccess records a successful notification
+func (m *Mattermost) recordSuccess(duration time.Duration) {
+	m.metrics.TotalSent++
+	m.metrics.LastSent = time.Now()
+	m.metrics.LastDuration = duration
+	m.metrics.AvgDuration = time.Duration((int64(m.metrics.AvgDuration)*m.metrics.TotalSent + int64(duration)) / (m.metrics.TotalSent + 1))
+}
+
+// recordFailure records a failed notification
+func (m *Mattermost) recordFailure(err error) {
+	m.metrics.TotalFailed++
+	m.metrics.LastFailed = time.Now()
 }
 
 // formatMessage formats the message for Mattermost

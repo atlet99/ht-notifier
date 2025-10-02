@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/atlet99/ht-notifier/internal/harbor"
+	"github.com/atlet99/ht-notifier/internal/obs"
 	"github.com/atlet99/ht-notifier/internal/proc"
 	"github.com/atlet99/ht-notifier/internal/util"
 	"github.com/go-chi/chi/v5"
@@ -20,14 +21,7 @@ type WebhookHandler struct {
 	eventProcessor  *proc.HarborEventProcessor
 	logger          *zap.Logger
 	maxRequestSize  int64
-	metrics         *WebhookMetrics
-}
-
-// WebhookMetrics tracks webhook-related metrics
-type WebhookMetrics struct {
-	RequestsTotal      *CounterVec
-	ErrorsTotal        *CounterVec
-	ProcessingDuration *HistogramVec
+	metrics         *obs.Metrics
 }
 
 // NewWebhookHandler creates a new webhook handler
@@ -36,7 +30,7 @@ func NewWebhookHandler(
 	eventProcessor *proc.HarborEventProcessor,
 	logger *zap.Logger,
 	maxRequestSize int64,
-	metrics *WebhookMetrics,
+	metrics *obs.Metrics,
 ) *WebhookHandler {
 	return &WebhookHandler{
 		securityManager: securityManager,
@@ -58,7 +52,7 @@ func (h *WebhookHandler) HandleHarborWebhook(w http.ResponseWriter, r *http.Requ
 	startTime := time.Now()
 
 	// Record request metrics
-	h.metrics.RequestsTotal.WithLabelValues("harbor_webhook", "total").Inc()
+	h.metrics.RecordHarborEvent("harbor_webhook", "received", 0)
 
 	// Limit request size
 	if h.maxRequestSize > 0 && r.ContentLength > h.maxRequestSize {
@@ -66,7 +60,7 @@ func (h *WebhookHandler) HandleHarborWebhook(w http.ResponseWriter, r *http.Requ
 			zap.Int64("content_length", r.ContentLength),
 			zap.Int64("max_size", h.maxRequestSize))
 
-		h.metrics.ErrorsTotal.WithLabelValues("harbor_webhook", "request_too_large").Inc()
+		h.metrics.RecordHarborAPIError("webhook", 413)
 		http.Error(w, "Request entity too large", http.StatusRequestEntityTooLarge)
 		return
 	}
@@ -75,7 +69,7 @@ func (h *WebhookHandler) HandleHarborWebhook(w http.ResponseWriter, r *http.Requ
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		h.logger.Error("Failed to read request body", zap.Error(err))
-		h.metrics.ErrorsTotal.WithLabelValues("harbor_webhook", "read_body_failed").Inc()
+		h.metrics.RecordHarborAPIError("webhook", 400)
 		http.Error(w, "Bad Request - Failed to read body", http.StatusBadRequest)
 		return
 	}
@@ -88,7 +82,7 @@ func (h *WebhookHandler) HandleHarborWebhook(w http.ResponseWriter, r *http.Requ
 			zap.String("method", r.Method),
 			zap.String("path", r.URL.Path))
 
-		h.metrics.ErrorsTotal.WithLabelValues("harbor_webhook", "hmac_failed").Inc()
+		h.metrics.RecordHarborAPIError("webhook", 401)
 		http.Error(w, "Unauthorized - Invalid HMAC signature", http.StatusUnauthorized)
 		return
 	}
@@ -100,7 +94,7 @@ func (h *WebhookHandler) HandleHarborWebhook(w http.ResponseWriter, r *http.Requ
 			zap.Error(err),
 			zap.String("payload_preview", string(body[:min(len(body), 500)])))
 
-		h.metrics.ErrorsTotal.WithLabelValues("harbor_webhook", "parse_failed").Inc()
+		h.metrics.RecordHarborAPIError("webhook", 400)
 		http.Error(w, "Bad Request - Invalid JSON payload", http.StatusBadRequest)
 		return
 	}
@@ -111,7 +105,7 @@ func (h *WebhookHandler) HandleHarborWebhook(w http.ResponseWriter, r *http.Requ
 			zap.Error(err),
 			zap.String("event_type", webhookEvent.Type))
 
-		h.metrics.ErrorsTotal.WithLabelValues("harbor_webhook", "validation_failed").Inc()
+		h.metrics.RecordHarborAPIError("webhook", 400)
 		http.Error(w, "Bad Request - Invalid webhook event", http.StatusBadRequest)
 		return
 	}
@@ -128,15 +122,14 @@ func (h *WebhookHandler) HandleHarborWebhook(w http.ResponseWriter, r *http.Requ
 			zap.String("event_type", webhookEvent.Type),
 			zap.Error(err))
 
-		h.metrics.ErrorsTotal.WithLabelValues("harbor_webhook", "processing_failed").Inc()
+		h.metrics.RecordHarborAPIError("webhook", 500)
 		http.Error(w, "Internal Server Error - Failed to process event", http.StatusInternalServerError)
 		return
 	}
 
 	// Record successful processing
-	processingDuration := time.Since(startTime).Seconds()
-	h.metrics.ProcessingDuration.WithLabelValues("harbor_webhook").Observe(processingDuration)
-	h.metrics.RequestsTotal.WithLabelValues("harbor_webhook", "success").Inc()
+	processingDuration := time.Since(startTime)
+	h.metrics.RecordHarborEvent("harbor_webhook", "success", processingDuration)
 
 	h.logger.Info("Webhook processed successfully",
 		zap.String("event_type", webhookEvent.Type),

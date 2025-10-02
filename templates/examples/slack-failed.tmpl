@@ -1,0 +1,52 @@
+{{/* Advanced Slack template for failed scan */}}
+{
+  "text": "{{.Title}}",
+  "blocks": [
+    {
+      "type": "header",
+      "text": {
+        "type": "plain_text",
+        "text": "{{.Title}}"
+      }
+    },
+    {
+      "type": "section",
+      "text": {
+        "type": "mrkdwn",
+        "text": "{{.Body}}"
+      }
+    },
+    {
+      "type": "section",
+      "text": {
+        "type": "mrkdwn",
+        "text": "*Scan Failed* for repository: {{default \"unknown\" .Labels.repository}}"
+      }
+    }
+    {{if .SeverityCounts}},
+    {
+      "type": "section",
+      "text": {
+        "type": "mrkdwn",
+        "text": "*Previous Scan Results:*\n{{range $severity, $count := .SeverityCounts}}• {{severityIcon $severity}} *{{upper $severity}}*: {{criticalCount .SeverityCounts}}{{if gt $count 0}} ({{add $count 1}}){{end}}\n{{end}}"
+      }
+    }
+    {{end}}
+    {{if .Link}},
+    {
+      "type": "actions",
+      "elements": [
+        {
+          "type": "button",
+          "text": {
+            "type": "plain_text",
+            "text": "View in Harbor"
+          },
+          "url": "{{.Link}}",
+          "style": "primary"
+        }
+      ]
+    }
+    {{end}}
+  ]
+}

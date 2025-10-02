@@ -17,6 +17,7 @@ type Slack struct {
 	api         *slack.Client
 	slackConfig config.SlackConfig
 	limiter     RateLimiter
+	metrics     NotifierMetrics
 }
 
 // NewSlack creates a new Slack notifier
@@ -38,14 +39,18 @@ func NewSlack(cfg config.SlackConfig, limiter RateLimiter) (*Slack, error) {
 		api:         api,
 		slackConfig: validatedCfg,
 		limiter:     limiter,
+		metrics:     NotifierMetrics{},
 	}, nil
 }
 
 // Send implements the Notifier interface for Slack
 func (s *Slack) Send(ctx context.Context, msg Message) error {
+	start := time.Now()
+
 	// Apply rate limiting if configured
 	if s.limiter != nil {
 		if err := s.limiter.Wait(ctx); err != nil {
+			s.recordFailure(err)
 			return fmt.Errorf("rate limiter wait failed: %w", err)
 		}
 	}
@@ -65,7 +70,10 @@ func (s *Slack) Send(ctx context.Context, msg Message) error {
 		s.slackConfig.Channel,
 		options...,
 	)
+	duration := time.Since(start)
+
 	if err != nil {
+		s.recordFailure(err)
 		return fmt.Errorf("failed to send Slack message: %w", err)
 	}
 
@@ -74,6 +82,7 @@ func (s *Slack) Send(ctx context.Context, msg Message) error {
 		fmt.Printf("Slack message sent to channel %s at %s: %s\n", channelID, timestamp, formattedMsg)
 	}
 
+	s.recordSuccess(duration)
 	return nil
 }
 
@@ -165,7 +174,7 @@ func (s *Slack) CheckPermissions(ctx context.Context, requiredScopes []string) (
 	// For now, we'll assume the token has the required permissions
 	// since we successfully authenticated
 	authScopes := []string{} // Empty scopes - we can't retrieve them from auth test
-	
+
 	for _, requiredScope := range requiredScopes {
 		found := false
 		for _, authScope := range authScopes {
@@ -194,7 +203,7 @@ func (s *Slack) RefreshToken(ctx context.Context, refreshToken string) error {
 	// Note: This is a placeholder implementation
 	// In a real implementation, you would call the Slack OAuth API to refresh the token
 	// This would require additional configuration for OAuth client ID, client secret, etc.
-	
+
 	return fmt.Errorf("token refresh not implemented - requires OAuth configuration")
 }
 
@@ -234,7 +243,6 @@ func (s *Slack) SendThread(ctx context.Context, msg Message, threadTS string) er
 		slack.MsgOptionText(formattedMsg, s.slackConfig.Markdown),
 		slack.MsgOptionTS(threadTS), // Reply to thread
 	}
-	
 
 	options = append(options, s.getMessageOptions(msg)...)
 
@@ -301,6 +309,25 @@ func (s *Slack) GetThreadHistory(ctx context.Context, channelID, threadTS string
 // Name returns the name of this notifier
 func (s *Slack) Name() string {
 	return "slack"
+}
+
+// GetMetrics returns the metrics for this notifier
+func (s *Slack) GetMetrics() *NotifierMetrics {
+	return &s.metrics
+}
+
+// recordSuccess records a successful notification
+func (s *Slack) recordSuccess(duration time.Duration) {
+	s.metrics.TotalSent++
+	s.metrics.LastSent = time.Now()
+	s.metrics.LastDuration = duration
+	s.metrics.AvgDuration = time.Duration((int64(s.metrics.AvgDuration)*s.metrics.TotalSent + int64(duration)) / (s.metrics.TotalSent + 1))
+}
+
+// recordFailure records a failed notification
+func (s *Slack) recordFailure(err error) {
+	s.metrics.TotalFailed++
+	s.metrics.LastFailed = time.Now()
 }
 
 // formatMessage formats the message according to Slack configuration
@@ -547,4 +574,3 @@ func validateAndEnhanceConfig(cfg config.SlackConfig) (config.SlackConfig, error
 
 	return cfg, nil
 }
-

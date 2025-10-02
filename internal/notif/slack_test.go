@@ -88,9 +88,9 @@ func TestSlackMessageFormatting(t *testing.T) {
 func TestSlackSeverityColors(t *testing.T) {
 	// Create test configuration
 	slackConfig := config.SlackConfig{
-		Enabled:       true,
-		Token:         "xoxb-test-token",
-		Channel:       "#test-channel",
+		Enabled: true,
+		Token:   "xoxb-test-token",
+		Channel: "#test-channel",
 		MessageFormat: config.MessageFormatConfig{
 			SeverityColors: config.SeverityColors{
 				Critical: "🔴",

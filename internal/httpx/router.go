@@ -9,10 +9,12 @@ import (
 	"github.com/atlet99/ht-notifier/internal/errors"
 	"github.com/atlet99/ht-notifier/internal/health"
 	"github.com/atlet99/ht-notifier/internal/notif"
+	"github.com/atlet99/ht-notifier/internal/obs"
 	"github.com/atlet99/ht-notifier/internal/proc"
 	"github.com/atlet99/ht-notifier/internal/util"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 )
 
@@ -23,7 +25,7 @@ type Handler struct {
 	securityMgr    *util.SecurityManager
 	webhookHandler *WebhookHandler
 	logger         *zap.Logger
-	webhookMetrics *WebhookMetrics
+	webhookMetrics *obs.Metrics
 	cfg            *config.Config
 	healthChecker  *health.HealthChecker
 	errorLogger    *errors.ErrorLogger
@@ -55,12 +57,8 @@ func (rww *responseWriterWrapper) Write(b []byte) (int, error) {
 func NewHandler(cfg *config.Config, logger *zap.Logger, securityMgr *util.SecurityManager,
 	eventProcessor *proc.HarborEventProcessor, notifiers []notif.Notifier, healthChecker *health.HealthChecker) *Handler {
 
-	// Create webhook metrics
-	webhookMetrics := &WebhookMetrics{
-		RequestsTotal:      NewCounterVec([]string{"endpoint", "status"}),
-		ErrorsTotal:        NewCounterVec([]string{"endpoint", "error_type"}),
-		ProcessingDuration: NewHistogramVec([]string{"endpoint"}),
-	}
+	// Create metrics
+	webhookMetrics := obs.NewMetrics(prometheus.DefaultRegisterer, "ht_notifier")
 
 	// Create webhook handler
 	webhookHandler := NewWebhookHandler(
@@ -151,7 +149,7 @@ func (h *Handler) applyMiddlewares() {
 	h.router.Use(middleware.Compress(5))
 }
 
-// loggingMiddleware provides structured logging for HTTP requests
+// loggingMiddleware provides structured logging for HTTP requests with metrics
 func (h *Handler) loggingMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
@@ -162,14 +160,21 @@ func (h *Handler) loggingMiddleware(next http.Handler) http.Handler {
 		// Call next handler
 		next.ServeHTTP(wrappedWriter, r)
 
+		// Record HTTP metrics
+		duration := time.Since(start)
+		statusCode := wrappedWriter.statusCode
+
+		// Record HTTP request metrics using the metrics helper
+		h.webhookMetrics.RecordHTTPRequest(r.Method, r.URL.Path, statusCode, duration, 0)
+
 		// Log the request
 		h.logger.Info("HTTP request",
 			zap.String("method", r.Method),
 			zap.String("path", r.URL.Path),
 			zap.String("remote_addr", r.RemoteAddr),
 			zap.String("user_agent", r.UserAgent()),
-			zap.Int("status", wrappedWriter.statusCode),
-			zap.Duration("duration", time.Since(start)),
+			zap.Int("status", statusCode),
+			zap.Duration("duration", duration),
 		)
 	})
 }
@@ -195,23 +200,10 @@ func (h *Handler) hmacVerificationMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-// handleMetrics handles metrics requests
+// handleMetrics handles metrics requests with Prometheus integration
 func (h *Handler) handleMetrics(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-
-	// Return basic metrics for now
-	// TODO: Integrate with Prometheus metrics
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"status": "metrics_available",
-		"endpoints": map[string]interface{}{
-			"webhook": map[string]interface{}{
-				"requests_total":      h.webhookMetrics.RequestsTotal,
-				"errors_total":        h.webhookMetrics.ErrorsTotal,
-				"processing_duration": h.webhookMetrics.ProcessingDuration,
-			},
-		},
-	})
+	// Use Prometheus handler to expose metrics
+	obs.MetricsHandler().ServeHTTP(w, r)
 }
 
 // registerRoutes registers all application routes
@@ -278,6 +270,9 @@ func (h *Handler) harborWebhook(w http.ResponseWriter, r *http.Request) {
 
 	// Send notification to all configured notifiers with error handling
 	var sendErrors []error
+	var successfulNotifiers []string
+	var failedNotifiers []string
+
 	for _, notifier := range h.notifiers {
 		err := h.circuitBreaker.Execute(func() error {
 			return notifier.Send(ctx, msg)
@@ -285,7 +280,11 @@ func (h *Handler) harborWebhook(w http.ResponseWriter, r *http.Request) {
 
 		if err != nil {
 			sendErrors = append(sendErrors, err)
+			failedNotifiers = append(failedNotifiers, notifier.Name())
 			h.errorLogger.LogError(err, zap.String("notifier", notifier.Name()))
+			h.webhookMetrics.RecordNotificationFailure(notifier.Name(), "send_error")
+		} else {
+			successfulNotifiers = append(successfulNotifiers, notifier.Name())
 		}
 	}
 
@@ -301,7 +300,10 @@ func (h *Handler) harborWebhook(w http.ResponseWriter, r *http.Request) {
 	h.logger.Info("Webhook processed successfully",
 		zap.Duration("processing_time", time.Since(start)),
 		zap.Int("notifiers", len(h.notifiers)),
-		zap.Int("failed_notifiers", len(sendErrors)))
+		zap.Int("successful_notifiers", len(successfulNotifiers)),
+		zap.Int("failed_notifiers", len(failedNotifiers)),
+		zap.Strings("successful_targets", successfulNotifiers),
+		zap.Strings("failed_targets", failedNotifiers))
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)

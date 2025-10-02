@@ -28,6 +28,13 @@ type Metrics struct {
 	NotificationsFailedTotal *prometheus.CounterVec
 	NotificationDuration     *prometheus.HistogramVec
 
+	// Per-notifier metrics
+	NotifierSentTotal       *prometheus.CounterVec
+	NotifierFailedTotal     *prometheus.CounterVec
+	NotifierDuration        *prometheus.HistogramVec
+	NotifierLastSuccessTime *prometheus.GaugeVec
+	NotifierLastFailureTime *prometheus.GaugeVec
+
 	// Processing metrics
 	ProcessedEventsTotal        *prometheus.CounterVec
 	ProcessingErrorsTotal       *prometheus.CounterVec
@@ -134,6 +141,49 @@ func NewMetrics(registry prometheus.Registerer, namespace string) *Metrics {
 				Buckets:   prometheus.DefBuckets,
 			},
 			[]string{"target"},
+		),
+
+		// Per-notifier metrics
+		NotifierSentTotal: promauto.With(registry).NewCounterVec(
+			prometheus.CounterOpts{
+				Namespace: namespace,
+				Name:      "notifier_sent_total",
+				Help:      "Total number of notifications sent by each notifier",
+			},
+			[]string{"notifier"},
+		),
+		NotifierFailedTotal: promauto.With(registry).NewCounterVec(
+			prometheus.CounterOpts{
+				Namespace: namespace,
+				Name:      "notifier_failed_total",
+				Help:      "Total number of failed notifications by each notifier",
+			},
+			[]string{"notifier"},
+		),
+		NotifierDuration: promauto.With(registry).NewHistogramVec(
+			prometheus.HistogramOpts{
+				Namespace: namespace,
+				Name:      "notifier_duration_seconds",
+				Help:      "Notification sending duration by each notifier in seconds",
+				Buckets:   prometheus.DefBuckets,
+			},
+			[]string{"notifier"},
+		),
+		NotifierLastSuccessTime: promauto.With(registry).NewGaugeVec(
+			prometheus.GaugeOpts{
+				Namespace: namespace,
+				Name:      "notifier_last_success_timestamp_seconds",
+				Help:      "Unix timestamp of the last successful notification for each notifier",
+			},
+			[]string{"notifier"},
+		),
+		NotifierLastFailureTime: promauto.With(registry).NewGaugeVec(
+			prometheus.GaugeOpts{
+				Namespace: namespace,
+				Name:      "notifier_last_failure_timestamp_seconds",
+				Help:      "Unix timestamp of the last failed notification for each notifier",
+			},
+			[]string{"notifier"},
 		),
 
 		// Processing metrics
@@ -249,11 +299,29 @@ func (m *Metrics) RecordHarborAPIError(endpoint string, statusCode int) {
 func (m *Metrics) RecordNotification(target, status string, duration time.Duration) {
 	m.NotificationsSentTotal.WithLabelValues(target, status).Inc()
 	m.NotificationDuration.WithLabelValues(target).Observe(duration.Seconds())
+
+	// Also record per-notifier metrics
+	m.NotifierSentTotal.WithLabelValues(target).Inc()
+	m.NotifierDuration.WithLabelValues(target).Observe(duration.Seconds())
+
+	if status == "success" {
+		m.NotifierLastSuccessTime.WithLabelValues(target).Set(float64(time.Now().Unix()))
+	}
 }
 
 // RecordNotificationFailure records notification failure metrics
 func (m *Metrics) RecordNotificationFailure(target, errorType string) {
 	m.NotificationsFailedTotal.WithLabelValues(target, errorType).Inc()
+
+	// Also record per-notifier metrics
+	m.NotifierFailedTotal.WithLabelValues(target).Inc()
+	m.NotifierLastFailureTime.WithLabelValues(target).Set(float64(time.Now().Unix()))
+}
+
+// RecordNotifierMetrics records metrics from individual notifiers
+func (m *Metrics) RecordNotifierMetrics(notifierName string, metrics interface{}) {
+	// This method can be used to record additional metrics from notifier implementations
+	// For now, it's a placeholder for future enhancement
 }
 
 // RecordProcessedEvent records processed event metrics

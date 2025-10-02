@@ -93,27 +93,27 @@ type TemplateConfig struct {
 }
 
 type SlackConfig struct {
-	Enabled       bool                `yaml:"enabled"`
-	Token         string              `yaml:"token"`
-	Channel       string              `yaml:"channel"`
-	Timeout       time.Duration       `yaml:"timeout"`
-	RatePerMinute int                 `yaml:"rate_per_minute"`
-	Debug         bool                `yaml:"debug"`
-	MessageFormat MessageFormatConfig `yaml:"message_format"`
-	Templates     TemplateConfig      `yaml:"templates"`
-	Username      string              `yaml:"username"`
-	IconEmoji     string              `yaml:"icon_emoji"`
-	IconURL       string              `yaml:"icon_url"`
-	LinkNames     bool                `yaml:"link_names"`
-	UnfurlLinks   bool                `yaml:"unfurl_links"`
-	UnfurlMedia   bool                `yaml:"unfurl_media"`
-	Markdown      bool                `yaml:"markdown"`
-	EnableBlocks  bool                `yaml:"enable_blocks"`
-	EnableInteractive bool            `yaml:"enable_interactive"`
-	ThreadTS      string              `yaml:"thread_ts"`
-	ReplyBroadcast bool               `yaml:"reply_broadcast"`
-	EnableReactions bool              `yaml:"enable_reactions"`
-	EnableScheduling bool             `yaml:"enable_scheduling"`
+	Enabled           bool                `yaml:"enabled"`
+	Token             string              `yaml:"token"`
+	Channel           string              `yaml:"channel"`
+	Timeout           time.Duration       `yaml:"timeout"`
+	RatePerMinute     int                 `yaml:"rate_per_minute"`
+	Debug             bool                `yaml:"debug"`
+	MessageFormat     MessageFormatConfig `yaml:"message_format"`
+	Templates         TemplateConfig      `yaml:"templates"`
+	Username          string              `yaml:"username"`
+	IconEmoji         string              `yaml:"icon_emoji"`
+	IconURL           string              `yaml:"icon_url"`
+	LinkNames         bool                `yaml:"link_names"`
+	UnfurlLinks       bool                `yaml:"unfurl_links"`
+	UnfurlMedia       bool                `yaml:"unfurl_media"`
+	Markdown          bool                `yaml:"markdown"`
+	EnableBlocks      bool                `yaml:"enable_blocks"`
+	EnableInteractive bool                `yaml:"enable_interactive"`
+	ThreadTS          string              `yaml:"thread_ts"`
+	ReplyBroadcast    bool                `yaml:"reply_broadcast"`
+	EnableReactions   bool                `yaml:"enable_reactions"`
+	EnableScheduling  bool                `yaml:"enable_scheduling"`
 }
 
 type MattermostConfig struct {
@@ -406,6 +406,8 @@ func setDefaults(v *viper.Viper) {
 
 	// Slack notification configuration
 	v.SetDefault("notify.slack.enabled", false)
+	v.SetDefault("notify.slack.token", "")
+	v.SetDefault("notify.slack.channel", "")
 	v.SetDefault("notify.slack.timeout", "5s")
 	v.SetDefault("notify.slack.rate_per_minute", 30)
 	v.SetDefault("notify.slack.debug", false)
@@ -818,34 +820,6 @@ func (c *Config) validateNotifyConfig() error {
 		}
 	}
 
-	return nil
-}
-
-func (c *Config) validateProcessingConfig() error {
-	// Validate concurrency
-	if c.Processing.MaxConcurrency <= 0 {
-		return errors.New("max concurrency must be positive")
-	}
-
-	// Validate queue size
-	if c.Processing.MaxQueue <= 0 {
-		return errors.New("max queue size must be positive")
-	}
-
-	// Validate retry configuration
-	if c.Processing.Retry.MaxAttempts <= 0 {
-		return errors.New("max retry attempts must be positive")
-	}
-	if c.Processing.Retry.InitialBackoff <= 0 {
-		return errors.New("initial backoff must be positive")
-	}
-	if c.Processing.Retry.MaxBackoff <= 0 {
-		return errors.New("max backoff must be positive")
-	}
-	if c.Processing.Retry.MaxBackoff < c.Processing.Retry.InitialBackoff {
-		return errors.New("max backoff must be greater than or equal to initial backoff")
-	}
-
 	// Validate Slack configuration
 	if c.Notify.Slack.Enabled {
 		if c.Notify.Slack.Token == "" {
@@ -882,6 +856,34 @@ func (c *Config) validateProcessingConfig() error {
 		if c.Notify.Slack.MessageFormat.SeverityColors.Low == "" {
 			return errors.New("Slack severity color for low issues is required")
 		}
+	}
+
+	return nil
+}
+
+func (c *Config) validateProcessingConfig() error {
+	// Validate concurrency
+	if c.Processing.MaxConcurrency <= 0 {
+		return errors.New("max concurrency must be positive")
+	}
+
+	// Validate queue size
+	if c.Processing.MaxQueue <= 0 {
+		return errors.New("max queue size must be positive")
+	}
+
+	// Validate retry configuration
+	if c.Processing.Retry.MaxAttempts <= 0 {
+		return errors.New("max retry attempts must be positive")
+	}
+	if c.Processing.Retry.InitialBackoff <= 0 {
+		return errors.New("initial backoff must be positive")
+	}
+	if c.Processing.Retry.MaxBackoff <= 0 {
+		return errors.New("max backoff must be positive")
+	}
+	if c.Processing.Retry.MaxBackoff < c.Processing.Retry.InitialBackoff {
+		return errors.New("max backoff must be greater than or equal to initial backoff")
 	}
 
 	return nil

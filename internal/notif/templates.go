@@ -2,9 +2,12 @@ package notif
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"text/template"
@@ -265,6 +268,7 @@ func (t *MessageTemplates) FormatMessage(msg *Message) (*Message, error) {
 		Link           string
 		Labels         map[string]string
 		Timestamp      string
+		ShowTimestamp  bool
 	}{
 		Title:          msg.Title,
 		Body:           msg.Body,
@@ -272,6 +276,7 @@ func (t *MessageTemplates) FormatMessage(msg *Message) (*Message, error) {
 		Link:           msg.Link,
 		Labels:         msg.Labels,
 		Timestamp:      time.Now().Format(time.RFC3339),
+		ShowTimestamp:  t.config.ShowTimestamp,
 	}
 
 	// Ensure maps are non-nil to avoid template panics
@@ -285,6 +290,9 @@ func (t *MessageTemplates) FormatMessage(msg *Message) (*Message, error) {
 	// Execute template
 	var buf bytes.Buffer
 	if err := tmpl.Execute(&buf, data); err != nil {
+		t.logger.Error("Failed to execute template",
+			zap.String("template", tmplName),
+			zap.Error(err))
 		return nil, fmt.Errorf("failed to execute template: %w", err)
 	}
 
@@ -298,7 +306,7 @@ func (t *MessageTemplates) FormatMessage(msg *Message) (*Message, error) {
 	}
 
 	if t.config.MaxMessageLength > 0 && len(newMsg.Body) > t.config.MaxMessageLength {
-		newMsg.Body = newMsg.Body[:t.config.MaxMessageLength] + "..."
+		newMsg.Body = newMsg.Body[:t.config.MaxMessageLength-3] + "..."
 	}
 
 	if t.config.CustomPrefix != "" {
@@ -309,7 +317,70 @@ func (t *MessageTemplates) FormatMessage(msg *Message) (*Message, error) {
 		newMsg.Body = newMsg.Body + "\n" + t.config.CustomSuffix
 	}
 
+	// Add severity information if not already in template
+	if t.config.IncludeSeverity && len(newMsg.SeverityCounts) > 0 && !strings.Contains(newMsg.Body, "Severity") {
+		severityInfo := t.formatSeverityInfo(newMsg.SeverityCounts)
+		newMsg.Body = newMsg.Body + "\n\n" + severityInfo
+	}
+
 	return &newMsg, nil
+}
+
+// formatSeverityInfo formats severity information for display
+func (t *MessageTemplates) formatSeverityInfo(counts map[string]int) string {
+	var builder strings.Builder
+	builder.WriteString("📊 **Severity Summary:**\n")
+
+	// Get severity colors from config
+	colors := t.config.SeverityColors
+
+	if critical := counts["CRITICAL"]; critical > 0 {
+		color := colors.Critical
+		if color == "" {
+			color = "🔴"
+		}
+		builder.WriteString(fmt.Sprintf("%s Critical: %d\n", color, critical))
+	}
+
+	if high := counts["HIGH"]; high > 0 {
+		color := colors.High
+		if color == "" {
+			color = "🟠"
+		}
+		builder.WriteString(fmt.Sprintf("%s High: %d\n", color, high))
+	}
+
+	if medium := counts["MEDIUM"]; medium > 0 {
+		color := colors.Medium
+		if color == "" {
+			color = "🟡"
+		}
+		builder.WriteString(fmt.Sprintf("%s Medium: %d\n", color, medium))
+	}
+
+	if low := counts["LOW"]; low > 0 {
+		color := colors.Low
+		if color == "" {
+			color = "🟢"
+		}
+		builder.WriteString(fmt.Sprintf("%s Low: %d\n", color, low))
+	}
+
+	if unknown := counts["UNKNOWN"]; unknown > 0 {
+		color := colors.Unknown
+		if color == "" {
+			color = "⚪"
+		}
+		builder.WriteString(fmt.Sprintf("%s Unknown: %d\n", color, unknown))
+	}
+
+	total := 0
+	for _, count := range counts {
+		total += count
+	}
+	builder.WriteString(fmt.Sprintf("🔥 **Total:** %d", total))
+
+	return builder.String()
 }
 
 // escapeMarkdown escapes markdown characters
@@ -328,7 +399,7 @@ func (t *MessageTemplates) TemplateFunctions() template.FuncMap {
 	return template.FuncMap{
 		// Severity functions
 		"severityIcon": func(severity string) string {
-			switch severity {
+			switch strings.ToUpper(severity) {
 			case "CRITICAL":
 				return "🔴"
 			case "HIGH":
@@ -337,11 +408,16 @@ func (t *MessageTemplates) TemplateFunctions() template.FuncMap {
 				return "🟡"
 			case "LOW":
 				return "🟢"
+			case "UNKNOWN":
+				return "⚪"
 			default:
 				return "⚪"
 			}
 		},
 		"hasVulnerabilities": func(counts map[string]int) bool {
+			if counts == nil {
+				return false
+			}
 			for _, count := range counts {
 				if count > 0 {
 					return true
@@ -350,18 +426,33 @@ func (t *MessageTemplates) TemplateFunctions() template.FuncMap {
 			return false
 		},
 		"criticalCount": func(counts map[string]int) int {
+			if counts == nil {
+				return 0
+			}
 			return counts["CRITICAL"]
 		},
 		"highCount": func(counts map[string]int) int {
+			if counts == nil {
+				return 0
+			}
 			return counts["HIGH"]
 		},
 		"mediumCount": func(counts map[string]int) int {
+			if counts == nil {
+				return 0
+			}
 			return counts["MEDIUM"]
 		},
 		"lowCount": func(counts map[string]int) int {
+			if counts == nil {
+				return 0
+			}
 			return counts["LOW"]
 		},
 		"totalVulnerabilities": func(counts map[string]int) int {
+			if counts == nil {
+				return 0
+			}
 			total := 0
 			for _, count := range counts {
 				total += count
@@ -397,19 +488,53 @@ func (t *MessageTemplates) TemplateFunctions() template.FuncMap {
 
 		// Date/time functions
 		"formatTime": func(format string, t time.Time) string {
+			if t.IsZero() {
+				return ""
+			}
 			return t.Format(format)
 		},
 		"formatDate": func(format string, t time.Time) string {
+			if t.IsZero() {
+				return ""
+			}
 			return t.Format(format)
 		},
 		"now": func() time.Time {
 			return time.Now()
 		},
-		"formatTimestamp": func(timestamp string) string {
-			t, err := time.Parse(time.RFC3339, timestamp)
-			if err != nil {
-				return timestamp
+		"formatTimestamp": func(timestamp interface{}) string {
+			if timestamp == nil {
+				return ""
 			}
+
+			var t time.Time
+			var err error
+
+			switch v := timestamp.(type) {
+			case string:
+				t, err = time.Parse(time.RFC3339, v)
+				if err != nil {
+					// Try parsing as Unix timestamp
+					if unix, err := strconv.ParseInt(v, 10, 64); err == nil {
+						t = time.Unix(unix, 0)
+					} else {
+						return v
+					}
+				}
+			case int64:
+				t = time.Unix(v, 0)
+			case float64:
+				t = time.Unix(int64(v), 0)
+			case time.Time:
+				t = v
+			default:
+				return fmt.Sprintf("%v", v)
+			}
+
+			if t.IsZero() {
+				return ""
+			}
+
 			return t.Format("2006-01-02 15:04:05")
 		},
 
@@ -464,7 +589,11 @@ func (t *MessageTemplates) TemplateFunctions() template.FuncMap {
 
 		// Utility functions
 		"toJSON": func(v interface{}) string {
-			return fmt.Sprintf("%v", v)
+			jsonData, err := json.Marshal(v)
+			if err != nil {
+				return fmt.Sprintf("%v", v)
+			}
+			return string(jsonData)
 		},
 		"indent": func(indent string, text string) string {
 			lines := strings.Split(text, "\n")
@@ -480,6 +609,28 @@ func (t *MessageTemplates) TemplateFunctions() template.FuncMap {
 				return text
 			}
 			return text[:length] + "..."
+		},
+		"round": func(n float64, precision int) float64 {
+			factor := math.Pow(10, float64(precision))
+			return math.Round(n*factor) / factor
+		},
+		"abs": func(n int) int {
+			if n < 0 {
+				return -n
+			}
+			return n
+		},
+		"len": func(v interface{}) int {
+			switch val := v.(type) {
+			case string:
+				return len(val)
+			case []interface{}:
+				return len(val)
+			case map[string]interface{}:
+				return len(val)
+			default:
+				return 0
+			}
 		},
 	}
 }
