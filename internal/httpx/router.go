@@ -1,9 +1,15 @@
+// Package httpx provides HTTP handlers and routing for the application.
 package httpx
 
 import (
 	"encoding/json"
 	"net/http"
 	"time"
+
+	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/chi/v5/middleware"
+	"github.com/prometheus/client_golang/prometheus"
+	"go.uber.org/zap"
 
 	"github.com/atlet99/ht-notifier/internal/config"
 	"github.com/atlet99/ht-notifier/internal/errors"
@@ -12,10 +18,14 @@ import (
 	"github.com/atlet99/ht-notifier/internal/obs"
 	"github.com/atlet99/ht-notifier/internal/proc"
 	"github.com/atlet99/ht-notifier/internal/util"
-	"github.com/go-chi/chi/v5"
-	"github.com/go-chi/chi/v5/middleware"
-	"github.com/prometheus/client_golang/prometheus"
-	"go.uber.org/zap"
+)
+
+const (
+	defaultErrorRecoveryAttempts  = 3
+	defaultCircuitBreakerFailures = 5
+	defaultCircuitBreakerTimeout  = 30 * time.Second
+	defaultRequestTimeout         = 30 * time.Second
+	defaultCompressionLevel       = 5
 )
 
 // Handler holds the HTTP handler dependencies
@@ -27,7 +37,7 @@ type Handler struct {
 	logger         *zap.Logger
 	webhookMetrics *obs.Metrics
 	cfg            *config.Config
-	healthChecker  *health.HealthChecker
+	healthChecker  *health.CompositeChecker
 	errorLogger    *errors.ErrorLogger
 	errorRecovery  *errors.ErrorRecovery
 	circuitBreaker *errors.CircuitBreaker
@@ -35,12 +45,12 @@ type Handler struct {
 
 // AuthConfig holds authentication configuration for webhook endpoints
 type AuthConfig struct {
-	APIKeyHeader     string   `yaml:"api_key_header"`     // Header name for API key authentication
-	APIKey           string   `yaml:"api_key"`           // API key for authentication
-	JWTSecret        string   `yaml:"jwt_secret"`        // JWT secret for token validation
-	AllowedIPs       []string `yaml:"allowed_ips"`      // List of allowed IP addresses/CIDRs
-	EnableHMAC       bool     `yaml:"enable_hmac"`       // Enable HMAC signature verification
-	RequireAuth      bool     `yaml:"require_auth"`      // Require authentication for all requests
+	APIKeyHeader string           `yaml:"api_key_header"` // Header name for API key authentication
+	APIKey       string           `yaml:"api_key"`        // API key for authentication
+	JWT          config.JWTConfig `yaml:"jwt"`            // JWT configuration
+	AllowedIPs   []string         `yaml:"allowed_ips"`    // List of allowed IP addresses/CIDRs
+	EnableHMAC   bool             `yaml:"enable_hmac"`    // Enable HMAC signature verification
+	RequireAuth  bool             `yaml:"require_auth"`   // Require authentication for all requests
 }
 
 // responseWriterWrapper wraps http.ResponseWriter to capture status code
@@ -64,20 +74,25 @@ func (rww *responseWriterWrapper) Write(b []byte) (int, error) {
 }
 
 // NewHandler creates a new HTTP handler with all routes and middlewares
-func NewHandler(cfg *config.Config, logger *zap.Logger, securityMgr *util.SecurityManager,
-	eventProcessor *proc.HarborEventProcessor, notifiers []notif.Notifier, healthChecker *health.HealthChecker) *Handler {
-
+func NewHandler(
+	cfg *config.Config,
+	logger *zap.Logger,
+	securityMgr *util.SecurityManager,
+	eventProcessor *proc.HarborEventProcessor,
+	notifiers []notif.Notifier,
+	healthChecker *health.CompositeChecker,
+) *Handler {
 	// Create metrics
 	webhookMetrics := obs.NewMetrics(prometheus.DefaultRegisterer, "ht_notifier")
 
 	// Create authentication config
 	authConfig := AuthConfig{
-		APIKeyHeader:     cfg.Server.HMACSecret,
-		APIKey:           cfg.Server.HMACSecret,
-		JWTSecret:        "", // Can be configured via environment variable
-		AllowedIPs:       cfg.Server.IPAllowlist,
-		EnableHMAC:       true,
-		RequireAuth:      len(cfg.Server.HMACSecret) > 0,
+		APIKeyHeader: cfg.Server.HMACSecret,
+		APIKey:       cfg.Server.HMACSecret,
+		JWT:          cfg.Server.JWT,
+		AllowedIPs:   cfg.Server.IPAllowlist,
+		EnableHMAC:   true,
+		RequireAuth:  cfg.Server.HMACSecret != "" || cfg.Server.JWT.Secret != "",
 	}
 
 	// Create webhook handler
@@ -87,13 +102,13 @@ func NewHandler(cfg *config.Config, logger *zap.Logger, securityMgr *util.Securi
 		logger,
 		cfg.Server.MaxRequestSize,
 		webhookMetrics,
-		authConfig,
+		&authConfig,
 	)
 
 	// Initialize error handling components
 	errorLogger := errors.NewErrorLogger(logger)
-	errorRecovery := errors.NewErrorRecovery(logger, 3, 1*time.Second)
-	circuitBreaker := errors.NewCircuitBreaker(5, 30*time.Second, logger)
+	errorRecovery := errors.NewErrorRecovery(logger, defaultErrorRecoveryAttempts, 1*time.Second)
+	circuitBreaker := errors.NewCircuitBreaker(defaultCircuitBreakerFailures, defaultCircuitBreakerTimeout, logger)
 
 	h := &Handler{
 		router:         chi.NewRouter(),
@@ -164,10 +179,10 @@ func (h *Handler) applyMiddlewares() {
 	h.router.Use(h.hmacVerificationMiddleware)
 
 	// Timeout middleware
-	h.router.Use(middleware.Timeout(30 * time.Second))
+	h.router.Use(middleware.Timeout(defaultRequestTimeout))
 
 	// Compression middleware
-	h.router.Use(middleware.Compress(5))
+	h.router.Use(middleware.Compress(defaultCompressionLevel))
 }
 
 // loggingMiddleware provides structured logging for HTTP requests with metrics
@@ -208,9 +223,9 @@ func (h *Handler) hmacVerificationMiddleware(next http.Handler) http.Handler {
 			if !h.securityMgr.VerifyHMAC(r) {
 				appErr := errors.NewAppError(errors.ErrorTypeAuthentication, "invalid_hmac",
 					"Unauthorized - Invalid HMAC signature")
-				appErr.WithContext("method", r.Method)
-				appErr.WithContext("url", r.URL.String())
-				appErr.WithContext("remote_addr", r.RemoteAddr)
+				_ = appErr.WithContext("method", r.Method)
+				_ = appErr.WithContext("url", r.URL.String())
+				_ = appErr.WithContext("remote_addr", r.RemoteAddr)
 
 				h.errorLogger.LogError(appErr)
 				h.writeErrorResponse(w, r, appErr)
@@ -257,82 +272,8 @@ func (h *Handler) readyz(w http.ResponseWriter, r *http.Request) {
 	healthHTTPHandler.Readyz(w, r)
 }
 
-// metrics handles metrics requests
-func (h *Handler) metrics(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	w.Write([]byte(`{"metrics":"not implemented yet"}`))
-}
-
-// harborWebhook handles Harbor webhook requests
-func (h *Handler) harborWebhook(w http.ResponseWriter, r *http.Request) {
-	start := time.Now()
-
-	// Create context for error handling
-	ctx := r.Context()
-	contextData := map[string]interface{}{
-		"method": r.Method,
-		"path":   r.URL.Path,
-		"remote": r.RemoteAddr,
-		"ctx":    ctx,
-	}
-
-	// Create notification message from webhook data
-	msg := notif.Message{
-		Title:  "Harbor Scan Alert",
-		Body:   "New scan results available",
-		Link:   "View in Harbor",
-		Labels: map[string]string{"severity": "medium"},
-		Metadata: map[string]interface{}{
-			"source": "harbor-webhook",
-			"time":   time.Now().UTC(),
-		},
-	}
-
-	// Send notification to all configured notifiers with error handling
-	var sendErrors []error
-	var successfulNotifiers []string
-	var failedNotifiers []string
-
-	for _, notifier := range h.notifiers {
-		err := h.circuitBreaker.Execute(func() error {
-			return notifier.Send(ctx, msg)
-		}, contextData)
-
-		if err != nil {
-			sendErrors = append(sendErrors, err)
-			failedNotifiers = append(failedNotifiers, notifier.Name())
-			h.errorLogger.LogError(err, zap.String("notifier", notifier.Name()))
-			h.webhookMetrics.RecordNotificationFailure(notifier.Name(), "send_error")
-		} else {
-			successfulNotifiers = append(successfulNotifiers, notifier.Name())
-		}
-	}
-
-	// If all notifiers failed, return an error
-	if len(sendErrors) == len(h.notifiers) {
-		appErr := errors.NewAppError(errors.ErrorTypeExternal, "notification_failed",
-			"Failed to send notifications to all configured targets")
-		h.writeErrorResponse(w, r, appErr)
-		return
-	}
-
-	// Log successful notification
-	h.logger.Info("Webhook processed successfully",
-		zap.Duration("processing_time", time.Since(start)),
-		zap.Int("notifiers", len(h.notifiers)),
-		zap.Int("successful_notifiers", len(successfulNotifiers)),
-		zap.Int("failed_notifiers", len(failedNotifiers)),
-		zap.Strings("successful_targets", successfulNotifiers),
-		zap.Strings("failed_targets", failedNotifiers))
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusAccepted)
-	w.Write([]byte(`{"status":"accepted"}`))
-}
-
 // writeErrorResponse writes a structured error response
-func (h *Handler) writeErrorResponse(w http.ResponseWriter, r *http.Request, err error) {
+func (h *Handler) writeErrorResponse(w http.ResponseWriter, _ *http.Request, err error) {
 	if appErr, ok := err.(*errors.AppError); ok {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(appErr.HTTPStatus)
@@ -352,17 +293,21 @@ func (h *Handler) writeErrorResponse(w http.ResponseWriter, r *http.Request, err
 			response["context"] = appErr.Context
 		}
 
-		json.NewEncoder(w).Encode(response)
+		if err := json.NewEncoder(w).Encode(response); err != nil {
+			h.logger.Error("Failed to encode error response", zap.Error(err))
+		}
 		return
 	}
 
 	// For non-app errors, return a generic internal error
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusInternalServerError)
-	json.NewEncoder(w).Encode(map[string]interface{}{
+	if err := json.NewEncoder(w).Encode(map[string]interface{}{
 		"error":     "Internal server error",
 		"code":      "internal_error",
 		"type":      "internal",
 		"timestamp": time.Now().UTC().Format(time.RFC3339),
-	})
+	}); err != nil {
+		h.logger.Error("Failed to encode error response", zap.Error(err))
+	}
 }

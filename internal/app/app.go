@@ -1,3 +1,4 @@
+// Package app provides the main application structure and lifecycle management.
 package app
 
 import (
@@ -8,14 +9,21 @@ import (
 	"syscall"
 	"time"
 
+	"go.uber.org/zap"
+
 	"github.com/atlet99/ht-notifier/internal/config"
 	"github.com/atlet99/ht-notifier/internal/errors"
 	"github.com/atlet99/ht-notifier/internal/httpx"
 	"github.com/atlet99/ht-notifier/internal/notif"
 	"github.com/atlet99/ht-notifier/internal/version"
-	"go.uber.org/zap"
 )
 
+const (
+	defaultErrorRecoveryMaxAttempts = 3
+	defaultReadHeaderTimeout        = 10 * time.Second
+)
+
+// App represents the main application instance.
 type App struct {
 	config        *config.Config
 	httpServer    *http.Server
@@ -26,15 +34,17 @@ type App struct {
 	errorRecovery *errors.ErrorRecovery
 }
 
+// New creates a new App instance with the provided configuration and dependencies.
 func New(cfg *config.Config, logger *zap.Logger, httpHandler *httpx.Handler, notifiers []notif.Notifier) (*App, error) {
 	// Initialize error handling components
 	errorLogger := errors.NewErrorLogger(logger)
-	errorRecovery := errors.NewErrorRecovery(logger, 3, 1*time.Second)
+	errorRecovery := errors.NewErrorRecovery(logger, defaultErrorRecoveryMaxAttempts, 1*time.Second)
 
 	// Create HTTP server
 	httpServer := &http.Server{
-		Addr:    cfg.Server.Addr,
-		Handler: httpHandler.Router(),
+		Addr:              cfg.Server.Addr,
+		Handler:           httpHandler.Router(),
+		ReadHeaderTimeout: defaultReadHeaderTimeout,
 	}
 
 	return &App{
@@ -48,6 +58,7 @@ func New(cfg *config.Config, logger *zap.Logger, httpHandler *httpx.Handler, not
 	}, nil
 }
 
+// Run starts the application and blocks until the context is canceled or an error occurs.
 func (a *App) Run(ctx context.Context) error {
 	// Start HTTP server with error recovery
 	serverErr := make(chan error, 1)
@@ -66,7 +77,7 @@ func (a *App) Run(ctx context.Context) error {
 		a.errorLogger.LogError(err, zap.String("phase", "server_running"))
 		return err
 	case <-ctx.Done():
-		// Context cancelled, initiate graceful shutdown with error recovery
+		// Context canceled, initiate graceful shutdown with error recovery
 		shutdownErr := a.Shutdown()
 		if shutdownErr != nil {
 			a.errorLogger.LogError(shutdownErr, zap.String("phase", "graceful_shutdown"))
@@ -77,6 +88,7 @@ func (a *App) Run(ctx context.Context) error {
 	}
 }
 
+// Shutdown gracefully shuts down the application.
 func (a *App) Shutdown() error {
 	// Create context for shutdown with timeout
 	ctx, cancel := context.WithTimeout(context.Background(), a.config.Server.ShutdownTimeout)

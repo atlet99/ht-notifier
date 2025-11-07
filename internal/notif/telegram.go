@@ -1,3 +1,4 @@
+// Package notif provides notification functionality for various channels.
 package notif
 
 import (
@@ -8,9 +9,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/atlet99/ht-notifier/internal/config"
 	"github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
+
+	"github.com/atlet99/ht-notifier/internal/config"
 )
 
 // Telegram implements the Notifier interface for Telegram using go-telegram/bot
@@ -33,7 +35,7 @@ type MessageFormat struct {
 }
 
 // NewTelegram creates a new Telegram notifier using go-telegram/bot
-func NewTelegram(cfg config.TelegramConfig, limiter RateLimiter) (*Telegram, error) {
+func NewTelegram(cfg *config.TelegramConfig, limiter RateLimiter) (*Telegram, error) {
 	// Validate configuration
 	if err := ValidateTelegramConfig(cfg); err != nil {
 		return nil, fmt.Errorf("invalid Telegram configuration: %w", err)
@@ -95,14 +97,14 @@ func NewTelegram(cfg config.TelegramConfig, limiter RateLimiter) (*Telegram, err
 		bot:           b,
 		chatID:        chatID,
 		limiter:       limiter,
-		config:        cfg,
+		config:        *cfg,
 		messageFormat: messageFormat,
 		metrics:       NotifierMetrics{},
 	}, nil
 }
 
 // Send implements the Notifier interface using go-telegram/bot
-func (t *Telegram) Send(ctx context.Context, msg Message) error {
+func (t *Telegram) Send(ctx context.Context, msg *Message) error {
 	start := time.Now()
 
 	// Apply rate limiting if configured
@@ -163,148 +165,37 @@ func (t *Telegram) recordSuccess(duration time.Duration) {
 	t.metrics.TotalSent++
 	t.metrics.LastSent = time.Now()
 	t.metrics.LastDuration = duration
-	t.metrics.AvgDuration = time.Duration((int64(t.metrics.AvgDuration)*t.metrics.TotalSent + int64(duration)) / (t.metrics.TotalSent + 1))
+	t.metrics.AvgDuration = time.Duration(
+		(int64(t.metrics.AvgDuration)*t.metrics.TotalSent + int64(duration)) /
+			(t.metrics.TotalSent + 1))
 }
 
 // recordFailure records a failed notification
-func (t *Telegram) recordFailure(err error) {
+func (t *Telegram) recordFailure(_ error) {
 	t.metrics.TotalFailed++
 	t.metrics.LastFailed = time.Now()
 }
 
 // formatMessage formats the message for Telegram
-func (t *Telegram) formatMessage(msg Message) string {
-	var builder strings.Builder
-
-	// Add custom prefix if provided
-	if t.config.MessageFormat.CustomPrefix != "" {
-		if t.messageFormat.EscapeMarkdown {
-			builder.WriteString(escapeMarkdownV2(t.config.MessageFormat.CustomPrefix))
-		} else {
-			builder.WriteString(t.config.MessageFormat.CustomPrefix)
-		}
-		builder.WriteString("\n\n")
-	}
-
-	// Add title if provided
-	if msg.Title != "" {
-		if t.messageFormat.EscapeMarkdown {
-			builder.WriteString("*")
-			builder.WriteString(escapeMarkdownV2(msg.Title))
-			builder.WriteString("*")
-		} else {
-			builder.WriteString(msg.Title)
-		}
-		builder.WriteString("\n\n")
-	}
-
-	// Add body
-	if msg.Body != "" {
-		if t.messageFormat.EscapeMarkdown {
-			builder.WriteString(escapeMarkdownV2(msg.Body))
-		} else {
-			builder.WriteString(msg.Body)
-		}
-		builder.WriteString("\n\n")
-	}
-
-	// Add severity information if available
-	if t.messageFormat.IncludeSeverity && len(msg.SeverityCounts) > 0 {
-		builder.WriteString("*Severity Summary:*\n")
-		if critical, ok := msg.SeverityCounts["Critical"]; ok && critical > 0 {
-			color := t.config.MessageFormat.SeverityColors.Critical
-			if color == "" {
-				color = "🔴"
-			}
-			builder.WriteString(fmt.Sprintf("%s Critical: %d\n", color, critical))
-		}
-		if high, ok := msg.SeverityCounts["High"]; ok && high > 0 {
-			color := t.config.MessageFormat.SeverityColors.High
-			if color == "" {
-				color = "🟠"
-			}
-			builder.WriteString(fmt.Sprintf("%s High: %d\n", color, high))
-		}
-		if medium, ok := msg.SeverityCounts["Medium"]; ok && medium > 0 {
-			color := t.config.MessageFormat.SeverityColors.Medium
-			if color == "" {
-				color = "🟡"
-			}
-			builder.WriteString(fmt.Sprintf("%s Medium: %d\n", color, medium))
-		}
-		if low, ok := msg.SeverityCounts["Low"]; ok && low > 0 {
-			color := t.config.MessageFormat.SeverityColors.Low
-			if color == "" {
-				color = "🟢"
-			}
-			builder.WriteString(fmt.Sprintf("%s Low: %d\n", color, low))
-		}
-		if unknown, ok := msg.SeverityCounts["Unknown"]; ok && unknown > 0 {
-			color := t.config.MessageFormat.SeverityColors.Unknown
-			if color == "" {
-				color = "⚪"
-			}
-			builder.WriteString(fmt.Sprintf("%s Unknown: %d\n", color, unknown))
-		}
-		builder.WriteString("\n")
-	}
-
-	// Add link if provided
-	if msg.Link != "" {
-		if t.messageFormat.EscapeMarkdown {
-			builder.WriteString(fmt.Sprintf("🔗 [Open in Harbor](%s)", escapeMarkdownV2(msg.Link)))
-		} else {
-			builder.WriteString(fmt.Sprintf("🔗 Open in Harbor: %s", msg.Link))
-		}
-		builder.WriteString("\n")
-	}
-
-	// Add timestamp if enabled
-	if t.messageFormat.ShowTimestamp {
-		builder.WriteString(fmt.Sprintf("\n⏰ *Timestamp:* %s", time.Now().Format(time.RFC3339)))
-	}
-
-	// Add metadata if available
-	if len(msg.Metadata) > 0 {
-		builder.WriteString("\n\n*Additional Information:*\n")
-		for key, value := range msg.Metadata {
-			if t.messageFormat.EscapeMarkdown {
-				builder.WriteString(fmt.Sprintf("*%s:* %s\n",
-					escapeMarkdownV2(key),
-					escapeMarkdownV2(fmt.Sprintf("%v", value))))
-			} else {
-				builder.WriteString(fmt.Sprintf("*%s:* %v\n", key, value))
-			}
-		}
-	}
-
-	// Add custom suffix if provided
-	if t.config.MessageFormat.CustomSuffix != "" {
-		builder.WriteString("\n\n")
-		if t.messageFormat.EscapeMarkdown {
-			builder.WriteString(escapeMarkdownV2(t.config.MessageFormat.CustomSuffix))
-		} else {
-			builder.WriteString(t.config.MessageFormat.CustomSuffix)
-		}
-	}
-
-	// Truncate message if it exceeds max length
-	result := builder.String()
-	if t.config.MessageFormat.MaxMessageLength > 0 && len(result) > t.config.MessageFormat.MaxMessageLength {
-		result = result[:t.config.MessageFormat.MaxMessageLength-3] + "..."
-	}
-
-	return result
+func (t *Telegram) formatMessage(msg *Message) string {
+	return formatMessageCommon(
+		msg,
+		&t.config.MessageFormat,
+		t.messageFormat.EscapeMarkdown,
+		t.messageFormat.IncludeSeverity,
+		t.messageFormat.ShowTimestamp,
+		escapeMarkdownV2,
+	)
 }
 
 // defaultHandler is the default handler for bot updates
-func defaultHandler(ctx context.Context, b *bot.Bot, update *models.Update) {
+func defaultHandler(_ context.Context, _ *bot.Bot, _ *models.Update) {
 	// This handler is called for all updates, but we don't need to handle anything
 	// for the notifier functionality
 }
 
-// ValidateConfig validates Telegram configuration
-func ValidateTelegramConfig(cfg config.TelegramConfig) error {
+// ValidateTelegramConfig validates Telegram configuration
+func ValidateTelegramConfig(cfg *config.TelegramConfig) error {
 	if cfg.BotToken == "" {
 		return fmt.Errorf("Telegram bot token is required")
 	}
@@ -473,7 +364,7 @@ func (t *Telegram) SendPoll(ctx context.Context, question string, options []stri
 }
 
 // SetWebhook sets a webhook for the bot
-func (t *Telegram) SetWebhook(ctx context.Context, url string, secretToken string) error {
+func (t *Telegram) SetWebhook(ctx context.Context, url, secretToken string) error {
 	params := &bot.SetWebhookParams{
 		URL: url,
 	}
@@ -493,7 +384,7 @@ func (t *Telegram) DeleteWebhook(ctx context.Context) error {
 }
 
 // GetWebhookInfo gets information about the webhook
-func (t *Telegram) GetWebhookInfo(ctx context.Context) (interface{}, error) {
+func (t *Telegram) GetWebhookInfo(_ context.Context) (interface{}, error) {
 	// The go-telegram/bot library doesn't expose a direct GetWebhookInfo method
 	// This is kept for compatibility but returns basic info
 	return map[string]interface{}{
@@ -502,14 +393,14 @@ func (t *Telegram) GetWebhookInfo(ctx context.Context) (interface{}, error) {
 }
 
 // GetUpdates gets updates from Telegram (for polling mode)
-func (t *Telegram) GetUpdates(ctx context.Context, offset int, limit int, timeout int) ([]interface{}, error) {
+func (t *Telegram) GetUpdates(_ context.Context, _, _, _ int) ([]interface{}, error) {
 	// The go-telegram/bot library handles polling automatically
 	// This method is kept for compatibility but doesn't need manual implementation
 	return []interface{}{}, nil
 }
 
 // ProcessUpdate processes a single update (for webhook mode)
-func (t *Telegram) ProcessUpdate(ctx context.Context, update *models.Update) {
+func (t *Telegram) ProcessUpdate(_ context.Context, _ *models.Update) {
 	// The go-telegram/bot library handles webhook processing automatically
 	// This method is kept for compatibility but doesn't need manual implementation
 }
@@ -522,13 +413,13 @@ func (t *Telegram) WebhookHandler() http.Handler {
 }
 
 // Start starts the bot in polling mode
-func (t *Telegram) Start(ctx context.Context) {
+func (t *Telegram) Start(_ context.Context) {
 	// The go-telegram/bot library handles polling automatically
 	// This method is kept for compatibility but doesn't need manual implementation
 }
 
 // StartWebhook starts the bot in webhook mode
-func (t *Telegram) StartWebhook(ctx context.Context) {
+func (t *Telegram) StartWebhook(_ context.Context) {
 	// The go-telegram/bot library handles webhook setup automatically
 	// This method is kept for compatibility but doesn't need manual implementation
 }

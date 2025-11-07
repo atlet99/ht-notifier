@@ -1,3 +1,4 @@
+// Package proc provides event processing functionality.
 package proc
 
 import (
@@ -6,11 +7,19 @@ import (
 	"sync"
 	"time"
 
+	"go.uber.org/zap"
+
 	"github.com/atlet99/ht-notifier/internal/config"
 	"github.com/atlet99/ht-notifier/internal/harbor"
 	"github.com/atlet99/ht-notifier/internal/notif"
 	"github.com/atlet99/ht-notifier/internal/obs"
-	"go.uber.org/zap"
+)
+
+const (
+	queueWorkerRetryDelay = 100 * time.Millisecond
+	queueProcessTimeout   = 5 * time.Minute
+	jitterPercentage      = 0.25
+	jitterDivisor         = 2
 )
 
 // Event represents a processing event
@@ -182,7 +191,7 @@ func (w *Worker) run() {
 					return
 				}
 				w.logger.Error("Failed to pop event from queue", zap.Error(err))
-				time.Sleep(100 * time.Millisecond)
+				time.Sleep(queueWorkerRetryDelay)
 				continue
 			}
 
@@ -200,7 +209,7 @@ func (w *Worker) processEvent(event *Event) {
 		zap.String("event_type", event.Type),
 		zap.Int("retries", event.Retries))
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), queueProcessTimeout)
 	defer cancel()
 
 	err := w.processor.Process(ctx, event)
@@ -221,10 +230,10 @@ func (w *Worker) processEvent(event *Event) {
 				zap.Duration("backoff", backoff))
 
 			time.AfterFunc(backoff, func() {
-				if err := w.queue.Push(event); err != nil {
+				if pushErr := w.queue.Push(event); pushErr != nil {
 					w.logger.Error("Failed to retry event",
 						zap.String("event_id", event.ID),
-						zap.Error(err))
+						zap.Error(pushErr))
 				}
 			})
 		} else {
@@ -245,16 +254,18 @@ func (w *Worker) processEvent(event *Event) {
 
 // calculateBackoff calculates exponential backoff with jitter
 func (w *Worker) calculateBackoff(attempt int) time.Duration {
+	// #nosec G115 -- attempt is bounded by MaxAttempts, overflow is not possible
 	backoff := w.retryConfig.InitialBackoff * time.Duration(1<<uint(attempt-1))
 	if backoff > w.retryConfig.MaxBackoff {
 		backoff = w.retryConfig.MaxBackoff
 	}
 
 	// Add jitter (±25%)
-	jitter := float64(backoff) * 0.25
+	jitter := float64(backoff) * jitterPercentage
 	jitterDuration := time.Duration(jitter)
 
-	return backoff + time.Duration(float64(jitterDuration)/2) - time.Duration(float64(jitterDuration)/2)
+	jitterOffset := time.Duration(float64(jitterDuration) / jitterDivisor)
+	return backoff + jitterOffset - jitterOffset
 }
 
 // Pool represents a worker pool

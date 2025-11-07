@@ -19,6 +19,10 @@ import (
 	"github.com/atlet99/ht-notifier/internal/config"
 )
 
+const (
+	roundPrecisionBase = 10
+)
+
 // MessageTemplates manages message templates for notifications
 type MessageTemplates struct {
 	logger         *zap.Logger
@@ -38,10 +42,14 @@ type TemplateConfig struct {
 }
 
 // NewMessageTemplates creates a new template manager
-func NewMessageTemplates(logger *zap.Logger, formatConfig config.MessageFormatConfig, templateConfig config.TemplateConfig) (*MessageTemplates, error) {
+func NewMessageTemplates(
+	logger *zap.Logger,
+	formatConfig *config.MessageFormatConfig,
+	templateConfig config.TemplateConfig,
+) (*MessageTemplates, error) {
 	tmpl := &MessageTemplates{
 		logger:         logger,
-		config:         formatConfig,
+		config:         *formatConfig,
 		templateConfig: templateConfig,
 		templates:      make(map[string]*template.Template),
 	}
@@ -100,6 +108,7 @@ func (t *MessageTemplates) loadFileTemplates() error {
 		templateName = strings.TrimSuffix(templateName, ".template")
 
 		filePath := filepath.Join(t.templateConfig.Path, file.Name())
+		// #nosec G304 -- filePath is validated and comes from config, not user input
 		content, err := os.ReadFile(filePath)
 		if err != nil {
 			t.logger.Error("Failed to read template file", zap.String("file", filePath), zap.Error(err))
@@ -337,7 +346,7 @@ func (t *MessageTemplates) formatSeverityInfo(counts map[string]int) string {
 	if critical := counts["CRITICAL"]; critical > 0 {
 		color := colors.Critical
 		if color == "" {
-			color = "🔴"
+			color = severityColorCritical
 		}
 		builder.WriteString(fmt.Sprintf("%s Critical: %d\n", color, critical))
 	}
@@ -345,7 +354,7 @@ func (t *MessageTemplates) formatSeverityInfo(counts map[string]int) string {
 	if high := counts["HIGH"]; high > 0 {
 		color := colors.High
 		if color == "" {
-			color = "🟠"
+			color = severityColorHigh
 		}
 		builder.WriteString(fmt.Sprintf("%s High: %d\n", color, high))
 	}
@@ -353,7 +362,7 @@ func (t *MessageTemplates) formatSeverityInfo(counts map[string]int) string {
 	if medium := counts["MEDIUM"]; medium > 0 {
 		color := colors.Medium
 		if color == "" {
-			color = "🟡"
+			color = severityColorMedium
 		}
 		builder.WriteString(fmt.Sprintf("%s Medium: %d\n", color, medium))
 	}
@@ -361,7 +370,7 @@ func (t *MessageTemplates) formatSeverityInfo(counts map[string]int) string {
 	if low := counts["LOW"]; low > 0 {
 		color := colors.Low
 		if color == "" {
-			color = "🟢"
+			color = severityColorLow
 		}
 		builder.WriteString(fmt.Sprintf("%s Low: %d\n", color, low))
 	}
@@ -369,7 +378,7 @@ func (t *MessageTemplates) formatSeverityInfo(counts map[string]int) string {
 	if unknown := counts["UNKNOWN"]; unknown > 0 {
 		color := colors.Unknown
 		if color == "" {
-			color = "⚪"
+			color = severityColorUnknown
 		}
 		builder.WriteString(fmt.Sprintf("%s Unknown: %d\n", color, unknown))
 	}
@@ -396,242 +405,363 @@ func escapeMarkdown(text string) string {
 
 // TemplateFunctions returns the template functions map
 func (t *MessageTemplates) TemplateFunctions() template.FuncMap {
+	funcs := make(template.FuncMap)
+
+	// Merge all function groups
+	mergeFuncMap(funcs, t.severityFunctions())
+	mergeFuncMap(funcs, t.stringFunctions())
+	mergeFuncMap(funcs, t.dateTimeFunctions())
+	mergeFuncMap(funcs, t.conditionalFunctions())
+	mergeFuncMap(funcs, t.mathFunctions())
+	mergeFuncMap(funcs, t.utilityFunctions())
+
+	return funcs
+}
+
+// mergeFuncMap merges source map into destination
+func mergeFuncMap(dst, src template.FuncMap) {
+	for k, v := range src {
+		dst[k] = v
+	}
+}
+
+// severityFunctions returns severity-related template functions
+func (t *MessageTemplates) severityFunctions() template.FuncMap {
 	return template.FuncMap{
-		// Severity functions
-		"severityIcon": func(severity string) string {
-			switch strings.ToUpper(severity) {
-			case "CRITICAL":
-				return "🔴"
-			case "HIGH":
-				return "🟠"
-			case "MEDIUM":
-				return "🟡"
-			case "LOW":
-				return "🟢"
-			case "UNKNOWN":
-				return "⚪"
-			default:
-				return "⚪"
-			}
-		},
-		"hasVulnerabilities": func(counts map[string]int) bool {
-			if counts == nil {
-				return false
-			}
-			for _, count := range counts {
-				if count > 0 {
-					return true
-				}
-			}
-			return false
-		},
-		"criticalCount": func(counts map[string]int) int {
-			if counts == nil {
-				return 0
-			}
-			return counts["CRITICAL"]
-		},
-		"highCount": func(counts map[string]int) int {
-			if counts == nil {
-				return 0
-			}
-			return counts["HIGH"]
-		},
-		"mediumCount": func(counts map[string]int) int {
-			if counts == nil {
-				return 0
-			}
-			return counts["MEDIUM"]
-		},
-		"lowCount": func(counts map[string]int) int {
-			if counts == nil {
-				return 0
-			}
-			return counts["LOW"]
-		},
-		"totalVulnerabilities": func(counts map[string]int) int {
-			if counts == nil {
-				return 0
-			}
-			total := 0
-			for _, count := range counts {
-				total += count
-			}
-			return total
-		},
+		"severityIcon":         t.severityIcon,
+		"hasVulnerabilities":   t.hasVulnerabilities,
+		"criticalCount":        t.criticalCount,
+		"highCount":            t.highCount,
+		"mediumCount":          t.mediumCount,
+		"lowCount":             t.lowCount,
+		"totalVulnerabilities": t.totalVulnerabilities,
+	}
+}
 
-		// String functions (Jinja-like)
-		"default": func(defaultValue, value interface{}) interface{} {
-			if value == nil || value == "" {
-				return defaultValue
-			}
-			return value
-		},
-		"upper": strings.ToUpper,
-		"lower": strings.ToLower,
-		"title": strings.Title,
-		"trim":  strings.TrimSpace,
-		"join":  strings.Join,
-		"split": strings.Split,
-		"replace": func(old, new, s string) string {
-			return strings.ReplaceAll(s, old, new)
-		},
-		"contains": func(substring, s string) bool {
-			return strings.Contains(s, substring)
-		},
-		"startsWith": func(prefix, s string) bool {
-			return strings.HasPrefix(s, prefix)
-		},
-		"endsWith": func(suffix, s string) bool {
-			return strings.HasSuffix(s, suffix)
-		},
+// severityIcon returns icon for severity level
+func (t *MessageTemplates) severityIcon(severity string) string {
+	switch strings.ToUpper(severity) {
+	case "CRITICAL":
+		return "🔴"
+	case "HIGH":
+		return "🟠"
+	case "MEDIUM":
+		return "🟡"
+	case "LOW":
+		return "🟢"
+	case "UNKNOWN":
+		return "⚪"
+	default:
+		return "⚪"
+	}
+}
 
-		// Date/time functions
-		"formatTime": func(format string, t time.Time) string {
-			if t.IsZero() {
-				return ""
-			}
-			return t.Format(format)
-		},
-		"formatDate": func(format string, t time.Time) string {
-			if t.IsZero() {
-				return ""
-			}
-			return t.Format(format)
-		},
-		"now": func() time.Time {
-			return time.Now()
-		},
-		"formatTimestamp": func(timestamp interface{}) string {
-			if timestamp == nil {
-				return ""
-			}
+// hasVulnerabilities checks if there are any vulnerabilities
+func (t *MessageTemplates) hasVulnerabilities(counts map[string]int) bool {
+	if counts == nil {
+		return false
+	}
+	for _, count := range counts {
+		if count > 0 {
+			return true
+		}
+	}
+	return false
+}
 
-			var t time.Time
-			var err error
+// criticalCount returns critical vulnerability count
+func (t *MessageTemplates) criticalCount(counts map[string]int) int {
+	if counts == nil {
+		return 0
+	}
+	return counts["CRITICAL"]
+}
 
-			switch v := timestamp.(type) {
-			case string:
-				t, err = time.Parse(time.RFC3339, v)
-				if err != nil {
-					// Try parsing as Unix timestamp
-					if unix, err := strconv.ParseInt(v, 10, 64); err == nil {
-						t = time.Unix(unix, 0)
-					} else {
-						return v
-					}
-				}
-			case int64:
-				t = time.Unix(v, 0)
-			case float64:
-				t = time.Unix(int64(v), 0)
-			case time.Time:
-				t = v
-			default:
-				return fmt.Sprintf("%v", v)
-			}
+// highCount returns high vulnerability count
+func (t *MessageTemplates) highCount(counts map[string]int) int {
+	if counts == nil {
+		return 0
+	}
+	return counts["HIGH"]
+}
 
-			if t.IsZero() {
-				return ""
-			}
+// mediumCount returns medium vulnerability count
+func (t *MessageTemplates) mediumCount(counts map[string]int) int {
+	if counts == nil {
+		return 0
+	}
+	return counts["MEDIUM"]
+}
 
-			return t.Format("2006-01-02 15:04:05")
-		},
+// lowCount returns low vulnerability count
+func (t *MessageTemplates) lowCount(counts map[string]int) int {
+	if counts == nil {
+		return 0
+	}
+	return counts["LOW"]
+}
 
-		// Conditional functions (Jinja-like)
-		"ternary": func(trueVal, falseVal, condition bool) interface{} {
-			if condition {
-				return trueVal
-			}
-			return falseVal
-		},
-		"first": func(items ...interface{}) interface{} {
-			if len(items) == 0 {
-				return nil
-			}
-			return items[0]
-		},
-		"last": func(items ...interface{}) interface{} {
-			if len(items) == 0 {
-				return nil
-			}
-			return items[len(items)-1]
-		},
+// totalVulnerabilities returns total vulnerability count
+func (t *MessageTemplates) totalVulnerabilities(counts map[string]int) int {
+	if counts == nil {
+		return 0
+	}
+	total := 0
+	for _, count := range counts {
+		total += count
+	}
+	return total
+}
 
-		// Math functions
-		"add": func(a, b int) int {
-			return a + b
-		},
-		"sub": func(a, b int) int {
-			return a - b
-		},
-		"mul": func(a, b int) int {
-			return a * b
-		},
-		"div": func(a, b int) int {
-			if b == 0 {
-				return 0
-			}
-			return a / b
-		},
-		"max": func(a, b int) int {
-			if a > b {
-				return a
-			}
-			return b
-		},
-		"min": func(a, b int) int {
-			if a < b {
-				return a
-			}
-			return b
-		},
+// stringFunctions returns string manipulation template functions
+func (t *MessageTemplates) stringFunctions() template.FuncMap {
+	return template.FuncMap{
+		"default":    t.defaultValue,
+		"upper":      strings.ToUpper,
+		"lower":      strings.ToLower,
+		"title":      t.titleCase,
+		"trim":       strings.TrimSpace,
+		"join":       strings.Join,
+		"split":      strings.Split,
+		"replace":    t.replaceString,
+		"contains":   strings.Contains,
+		"startsWith": strings.HasPrefix,
+		"endsWith":   strings.HasSuffix,
+	}
+}
 
-		// Utility functions
-		"toJSON": func(v interface{}) string {
-			jsonData, err := json.Marshal(v)
-			if err != nil {
-				return fmt.Sprintf("%v", v)
+// defaultValue returns default value if value is empty
+func (t *MessageTemplates) defaultValue(defaultVal, value interface{}) interface{} {
+	if value == nil || value == "" {
+		return defaultVal
+	}
+	return value
+}
+
+// titleCase returns title case string
+func (t *MessageTemplates) titleCase(s string) string {
+	if s == "" {
+		return s
+	}
+	return strings.ToUpper(s[:1]) + strings.ToLower(s[1:])
+}
+
+// replaceString replaces all occurrences
+func (t *MessageTemplates) replaceString(old, newVal, s string) string {
+	return strings.ReplaceAll(s, old, newVal)
+}
+
+// dateTimeFunctions returns date/time template functions
+func (t *MessageTemplates) dateTimeFunctions() template.FuncMap {
+	return template.FuncMap{
+		"formatTime":      t.formatTime,
+		"formatDate":      t.formatDate,
+		"now":             time.Now,
+		"formatTimestamp": t.formatTimestamp,
+	}
+}
+
+// formatTime formats time with given format
+func (t *MessageTemplates) formatTime(format string, timeVal time.Time) string {
+	if timeVal.IsZero() {
+		return ""
+	}
+	return timeVal.Format(format)
+}
+
+// formatDate formats date with given format
+func (t *MessageTemplates) formatDate(format string, timeVal time.Time) string {
+	if timeVal.IsZero() {
+		return ""
+	}
+	return timeVal.Format(format)
+}
+
+// formatTimestamp formats timestamp from various types
+func (t *MessageTemplates) formatTimestamp(timestamp interface{}) string {
+	if timestamp == nil {
+		return ""
+	}
+
+	var timeVal time.Time
+	var err error
+
+	switch v := timestamp.(type) {
+	case string:
+		timeVal, err = time.Parse(time.RFC3339, v)
+		if err != nil {
+			if unix, parseErr := strconv.ParseInt(v, 10, 64); parseErr == nil {
+				timeVal = time.Unix(unix, 0)
+			} else {
+				return v
 			}
-			return string(jsonData)
-		},
-		"indent": func(indent string, text string) string {
-			lines := strings.Split(text, "\n")
-			for i, line := range lines {
-				if line != "" {
-					lines[i] = indent + line
-				}
-			}
-			return strings.Join(lines, "\n")
-		},
-		"truncate": func(length int, text string) string {
-			if len(text) <= length {
-				return text
-			}
-			return text[:length] + "..."
-		},
-		"round": func(n float64, precision int) float64 {
-			factor := math.Pow(10, float64(precision))
-			return math.Round(n*factor) / factor
-		},
-		"abs": func(n int) int {
-			if n < 0 {
-				return -n
-			}
-			return n
-		},
-		"len": func(v interface{}) int {
-			switch val := v.(type) {
-			case string:
-				return len(val)
-			case []interface{}:
-				return len(val)
-			case map[string]interface{}:
-				return len(val)
-			default:
-				return 0
-			}
-		},
+		}
+	case int64:
+		timeVal = time.Unix(v, 0)
+	case float64:
+		timeVal = time.Unix(int64(v), 0)
+	case time.Time:
+		timeVal = v
+	default:
+		return fmt.Sprintf("%v", v)
+	}
+
+	if timeVal.IsZero() {
+		return ""
+	}
+
+	return timeVal.Format("2006-01-02 15:04:05")
+}
+
+// conditionalFunctions returns conditional template functions
+func (t *MessageTemplates) conditionalFunctions() template.FuncMap {
+	return template.FuncMap{
+		"ternary": t.ternary,
+		"first":   t.first,
+		"last":    t.last,
+	}
+}
+
+// ternary returns trueVal if condition is true, otherwise falseVal
+func (t *MessageTemplates) ternary(trueVal, falseVal, condition bool) interface{} {
+	if condition {
+		return trueVal
+	}
+	return falseVal
+}
+
+// first returns first item from slice
+func (t *MessageTemplates) first(items ...interface{}) interface{} {
+	if len(items) == 0 {
+		return nil
+	}
+	return items[0]
+}
+
+// last returns last item from slice
+func (t *MessageTemplates) last(items ...interface{}) interface{} {
+	if len(items) == 0 {
+		return nil
+	}
+	return items[len(items)-1]
+}
+
+// mathFunctions returns math template functions
+func (t *MessageTemplates) mathFunctions() template.FuncMap {
+	return template.FuncMap{
+		"add": t.add,
+		"sub": t.sub,
+		"mul": t.mul,
+		"div": t.div,
+		"max": t.maxInt,
+		"min": t.minInt,
+	}
+}
+
+// add adds two integers
+func (t *MessageTemplates) add(a, b int) int {
+	return a + b
+}
+
+// sub subtracts two integers
+func (t *MessageTemplates) sub(a, b int) int {
+	return a - b
+}
+
+// mul multiplies two integers
+func (t *MessageTemplates) mul(a, b int) int {
+	return a * b
+}
+
+// div divides two integers
+func (t *MessageTemplates) div(a, b int) int {
+	if b == 0 {
+		return 0
+	}
+	return a / b
+}
+
+// maxInt returns maximum of two integers
+func (t *MessageTemplates) maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+// minInt returns minimum of two integers
+func (t *MessageTemplates) minInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+// utilityFunctions returns utility template functions
+func (t *MessageTemplates) utilityFunctions() template.FuncMap {
+	return template.FuncMap{
+		"toJSON":   t.toJSON,
+		"indent":   t.indent,
+		"truncate": t.truncateString,
+		"round":    t.round,
+		"abs":      t.abs,
+		"len":      t.length,
+	}
+}
+
+// toJSON converts value to JSON string
+func (t *MessageTemplates) toJSON(v interface{}) string {
+	jsonData, err := json.Marshal(v)
+	if err != nil {
+		return fmt.Sprintf("%v", v)
+	}
+	return string(jsonData)
+}
+
+// indent indents each line of text
+func (t *MessageTemplates) indent(indentStr, text string) string {
+	lines := strings.Split(text, "\n")
+	for i, line := range lines {
+		if line != "" {
+			lines[i] = indentStr + line
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+// truncateString truncates string to given length
+func (t *MessageTemplates) truncateString(length int, text string) string {
+	if len(text) <= length {
+		return text
+	}
+	return text[:length] + "..."
+}
+
+// round rounds number to given precision
+func (t *MessageTemplates) round(n float64, precision int) float64 {
+	factor := math.Pow(roundPrecisionBase, float64(precision))
+	return math.Round(n*factor) / factor
+}
+
+// abs returns absolute value
+func (t *MessageTemplates) abs(n int) int {
+	if n < 0 {
+		return -n
+	}
+	return n
+}
+
+// length returns length of value
+func (t *MessageTemplates) length(v interface{}) int {
+	switch val := v.(type) {
+	case string:
+		return len(val)
+	case []interface{}:
+		return len(val)
+	case map[string]interface{}:
+		return len(val)
+	default:
+		return 0
 	}
 }
 

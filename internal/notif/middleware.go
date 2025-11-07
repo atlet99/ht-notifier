@@ -51,7 +51,7 @@ func RateLimitMiddleware(rateLimit int) bot.Middleware {
 				// Time slot is available, proceed
 				next(ctx, b, update)
 			case <-ctx.Done():
-				// Context was cancelled
+				// Context was canceled
 				return
 			}
 		}

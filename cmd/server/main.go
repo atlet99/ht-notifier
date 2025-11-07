@@ -1,3 +1,4 @@
+// Package main provides the entry point for the ht-notifier server application.
 package main
 
 import (
@@ -28,12 +29,12 @@ func main() {
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
 
 	log.Printf("Starting ht-notifier version=%s", version.Version)
 
 	// Run the application
 	if err := app.RunApplication(ctx, cfg); err != nil {
+		cancel() // Ensure context is canceled before exiting
 		log.Fatalf("Application failed: %v", err)
 	}
 }

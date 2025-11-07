@@ -195,20 +195,22 @@ func (e *WebhookEvent) GetResources() ([]Resource, error) {
 
 	if resourcesData, ok := e.EventData["resources"].([]interface{}); ok {
 		for _, resourceData := range resourcesData {
-			if resource, ok := resourceData.(map[string]interface{}); ok {
-				res := Resource{}
-				if digest, ok := resource["digest"].(string); ok {
-					res.ResourceName = digest
-				}
-				if tag, ok := resource["tag"].(string); ok {
-					res.ResourceName = tag
-				}
-				if url, ok := resource["resource_url"].(string); ok {
-					res.ResourceType = "artifact"
-					res.ResourceName = url
-				}
-				resources = append(resources, res)
+			resource, ok := resourceData.(map[string]interface{})
+			if !ok {
+				continue
 			}
+			res := Resource{}
+			if digest, ok := resource["digest"].(string); ok {
+				res.ResourceName = digest
+			}
+			if tag, ok := resource["tag"].(string); ok {
+				res.ResourceName = tag
+			}
+			if url, ok := resource["resource_url"].(string); ok {
+				res.ResourceType = "artifact"
+				res.ResourceName = url
+			}
+			resources = append(resources, res)
 		}
 	}
 

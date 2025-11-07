@@ -1,3 +1,4 @@
+// Package notif provides notification functionality for various channels.
 package notif
 
 import (
@@ -8,8 +9,15 @@ import (
 	"strings"
 	"time"
 
-	"github.com/atlet99/ht-notifier/internal/config"
 	"github.com/slack-go/slack"
+
+	"github.com/atlet99/ht-notifier/internal/config"
+)
+
+const (
+	slackConversationHistoryLimit = 100
+	slackFieldsLimit              = 10
+	defaultSlackTimeout           = 5 * time.Second
 )
 
 // Slack implements the Notifier interface for Slack notifications
@@ -21,7 +29,7 @@ type Slack struct {
 }
 
 // NewSlack creates a new Slack notifier
-func NewSlack(cfg config.SlackConfig, limiter RateLimiter) (*Slack, error) {
+func NewSlack(cfg *config.SlackConfig, limiter RateLimiter) (*Slack, error) {
 	if !cfg.Enabled {
 		return nil, fmt.Errorf("Slack notifier is not enabled")
 	}
@@ -44,7 +52,7 @@ func NewSlack(cfg config.SlackConfig, limiter RateLimiter) (*Slack, error) {
 }
 
 // Send implements the Notifier interface for Slack
-func (s *Slack) Send(ctx context.Context, msg Message) error {
+func (s *Slack) Send(ctx context.Context, msg *Message) error {
 	start := time.Now()
 
 	// Apply rate limiting if configured
@@ -192,7 +200,7 @@ func (s *Slack) CheckPermissions(ctx context.Context, requiredScopes []string) (
 }
 
 // RefreshToken refreshes the Slack token (for OAuth tokens)
-func (s *Slack) RefreshToken(ctx context.Context, refreshToken string) error {
+func (s *Slack) RefreshToken(ctx context.Context, _ string) error {
 	// Apply rate limiting if configured
 	if s.limiter != nil {
 		if err := s.limiter.Wait(ctx); err != nil {
@@ -227,7 +235,7 @@ func (s *Slack) GetChannelInfo(ctx context.Context, channelID string) (*slack.Ch
 }
 
 // SendThread sends a message as a reply to an existing thread
-func (s *Slack) SendThread(ctx context.Context, msg Message, threadTS string) error {
+func (s *Slack) SendThread(ctx context.Context, msg *Message, threadTS string) error {
 	// Apply rate limiting if configured
 	if s.limiter != nil {
 		if err := s.limiter.Wait(ctx); err != nil {
@@ -296,7 +304,7 @@ func (s *Slack) GetThreadHistory(ctx context.Context, channelID, threadTS string
 		ChannelID: channelID,
 		Latest:    threadTS,
 		Oldest:    "0",
-		Limit:     100,
+		Limit:     slackConversationHistoryLimit,
 		Inclusive: true,
 	})
 	if err != nil {
@@ -321,17 +329,19 @@ func (s *Slack) recordSuccess(duration time.Duration) {
 	s.metrics.TotalSent++
 	s.metrics.LastSent = time.Now()
 	s.metrics.LastDuration = duration
-	s.metrics.AvgDuration = time.Duration((int64(s.metrics.AvgDuration)*s.metrics.TotalSent + int64(duration)) / (s.metrics.TotalSent + 1))
+	s.metrics.AvgDuration = time.Duration(
+		(int64(s.metrics.AvgDuration)*s.metrics.TotalSent + int64(duration)) /
+			(s.metrics.TotalSent + 1))
 }
 
 // recordFailure records a failed notification
-func (s *Slack) recordFailure(err error) {
+func (s *Slack) recordFailure(_ error) {
 	s.metrics.TotalFailed++
 	s.metrics.LastFailed = time.Now()
 }
 
 // formatMessage formats the message according to Slack configuration
-func (s *Slack) formatMessage(msg Message) string {
+func (s *Slack) formatMessage(msg *Message) string {
 	var builder strings.Builder
 
 	// Add custom prefix if configured
@@ -393,7 +403,7 @@ func (s *Slack) formatMessage(msg Message) string {
 }
 
 // getMessageOptions returns additional message options for Slack
-func (s *Slack) getMessageOptions(msg Message) []slack.MsgOption {
+func (s *Slack) getMessageOptions(msg *Message) []slack.MsgOption {
 	var options []slack.MsgOption
 
 	// Set username if configured
@@ -454,7 +464,7 @@ func (s *Slack) getSeverityColor(severity string) string {
 }
 
 // getAttachmentColor returns the color for Slack attachment based on severity
-func (s *Slack) getAttachmentColor(msg Message) string {
+func (s *Slack) getAttachmentColor(msg *Message) string {
 	severity := msg.Labels["severity"]
 	switch severity {
 	case "critical":
@@ -471,7 +481,7 @@ func (s *Slack) getAttachmentColor(msg Message) string {
 }
 
 // createAttachmentFields creates attachment fields from message metadata
-func (s *Slack) createAttachmentFields(msg Message) []slack.AttachmentField {
+func (s *Slack) createAttachmentFields(msg *Message) []slack.AttachmentField {
 	fields := []slack.AttachmentField{}
 
 	// Add severity field
@@ -512,7 +522,7 @@ func (s *Slack) createAttachmentFields(msg Message) []slack.AttachmentField {
 
 	// Add metadata fields
 	for key, value := range msg.Metadata {
-		if len(fields) >= 10 { // Slack limit for fields
+		if len(fields) >= slackFieldsLimit { // Slack limit for fields
 			break
 		}
 		fields = append(fields, slack.AttachmentField{
@@ -532,9 +542,9 @@ func (s *Slack) escapeMarkdown(text string) string {
 	}
 
 	// Slack-specific Markdown escaping
-	text = strings.ReplaceAll(text, "&", "&")
-	text = strings.ReplaceAll(text, "<", "<")
-	text = strings.ReplaceAll(text, ">", ">")
+	text = strings.ReplaceAll(text, "&", "&amp;")
+	text = strings.ReplaceAll(text, "<", "&lt;")
+	text = strings.ReplaceAll(text, ">", "&gt;")
 
 	// Escape special characters that might break formatting
 	text = strings.ReplaceAll(text, "*", "\\*")
@@ -546,13 +556,13 @@ func (s *Slack) escapeMarkdown(text string) string {
 }
 
 // validateAndEnhanceConfig validates and enhances Slack configuration
-func validateAndEnhanceConfig(cfg config.SlackConfig) (config.SlackConfig, error) {
+func validateAndEnhanceConfig(cfg *config.SlackConfig) (config.SlackConfig, error) {
 	// Validate required fields
 	if cfg.Token == "" {
-		return cfg, fmt.Errorf("Slack token is required")
+		return *cfg, fmt.Errorf("Slack token is required")
 	}
 	if cfg.Channel == "" {
-		return cfg, fmt.Errorf("Slack channel is required")
+		return *cfg, fmt.Errorf("Slack channel is required")
 	}
 
 	// Set default values if not provided
@@ -563,7 +573,7 @@ func validateAndEnhanceConfig(cfg config.SlackConfig) (config.SlackConfig, error
 		cfg.IconEmoji = ":warning:"
 	}
 	if cfg.Timeout == 0 {
-		cfg.Timeout = 5 * time.Second
+		cfg.Timeout = defaultSlackTimeout
 	}
 	if cfg.RatePerMinute <= 0 {
 		cfg.RatePerMinute = 30
@@ -572,5 +582,5 @@ func validateAndEnhanceConfig(cfg config.SlackConfig) (config.SlackConfig, error
 		cfg.MessageFormat.MaxMessageLength = 4000
 	}
 
-	return cfg, nil
+	return *cfg, nil
 }

@@ -1,12 +1,18 @@
+// Package errors provides error handling and recovery mechanisms.
 package errors
 
 import (
 	"context"
 	"fmt"
 	"net/http"
+	"sync"
 	"time"
 
 	"go.uber.org/zap"
+)
+
+const (
+	circuitBreakerStateOpen = "open"
 )
 
 // ErrorType defines the type of error
@@ -131,15 +137,15 @@ func getHTTPStatusForErrorType(errorType ErrorType) int {
 
 // ErrorHandler defines the interface for error handlers
 type ErrorHandler interface {
-	HandleError(err error, context map[string]interface{}) *AppError
+	HandleError(err error, ctxData map[string]interface{}) *AppError
 }
 
 // ErrorHandlerFunc is a function type that implements ErrorHandler
-type ErrorHandlerFunc func(err error, context map[string]interface{}) *AppError
+type ErrorHandlerFunc func(err error, ctxData map[string]interface{}) *AppError
 
 // HandleError implements ErrorHandler interface
-func (f ErrorHandlerFunc) HandleError(err error, context map[string]interface{}) *AppError {
-	return f(err, context)
+func (f ErrorHandlerFunc) HandleError(err error, ctxData map[string]interface{}) *AppError {
+	return f(err, ctxData)
 }
 
 // ErrorLogger handles error logging
@@ -210,21 +216,27 @@ func (er *ErrorRecovery) RetryWithBackoff(operation func() error, ctxData map[st
 }
 
 // RetryWithContext retries an operation with exponential backoff and proper context handling
-func (er *ErrorRecovery) RetryWithContext(ctx context.Context, operation func() error, context map[string]interface{}) error {
+func (er *ErrorRecovery) RetryWithContext(
+	ctx context.Context,
+	operation func() error,
+	ctxData map[string]interface{},
+) error {
 	var lastErr error
 
 	for attempt := 0; attempt < er.maxAttempts; attempt++ {
 		if attempt > 0 {
 			// Calculate exponential backoff
+			// #nosec G115 -- attempt is bounded by maxAttempts, overflow is not possible
 			waitTime := er.backoff * time.Duration(1<<uint(attempt-1))
-			if waitTime > 30*time.Second {
-				waitTime = 30 * time.Second
+			const maxWaitTime = 30 * time.Second
+			if waitTime > maxWaitTime {
+				waitTime = maxWaitTime
 			}
 
 			er.logger.Info("Retrying operation after backoff",
 				zap.Int("attempt", attempt),
 				zap.Duration("wait_time", waitTime),
-				zap.Any("context", context))
+				zap.Any("context", ctxData))
 
 			select {
 			case <-time.After(waitTime):
@@ -242,7 +254,7 @@ func (er *ErrorRecovery) RetryWithContext(ctx context.Context, operation func() 
 		er.logger.Error("Operation failed, will retry",
 			zap.Int("attempt", attempt+1),
 			zap.Error(err),
-			zap.Any("context", context))
+			zap.Any("context", ctxData))
 	}
 
 	return fmt.Errorf("operation failed after %d attempts: %w", er.maxAttempts, lastErr)
@@ -256,6 +268,7 @@ type CircuitBreaker struct {
 	failures         int
 	lastFailureTime  time.Time
 	logger           *zap.Logger
+	mu               sync.RWMutex // Protects state, failures, and lastFailureTime
 }
 
 // NewCircuitBreaker creates a new circuit breaker
@@ -269,11 +282,26 @@ func NewCircuitBreaker(failureThreshold int, resetTimeout time.Duration, logger 
 }
 
 // Execute executes a function with circuit breaker protection
-func (cb *CircuitBreaker) Execute(operation func() error, context map[string]interface{}) error {
-	if cb.state == "open" {
-		if time.Since(cb.lastFailureTime) > cb.resetTimeout {
-			cb.state = "half-open"
-			cb.logger.Info("Circuit breaker moving to half-open state", zap.Any("context", context))
+func (cb *CircuitBreaker) Execute(operation func() error, ctxData map[string]interface{}) error {
+	// Check state with read lock
+	cb.mu.RLock()
+	state := cb.state
+	lastFailureTime := cb.lastFailureTime
+	cb.mu.RUnlock()
+
+	if state == circuitBreakerStateOpen {
+		if time.Since(lastFailureTime) > cb.resetTimeout {
+			// Try to transition to half-open state
+			cb.mu.Lock()
+			// Double-check after acquiring write lock
+			if cb.state == circuitBreakerStateOpen && time.Since(cb.lastFailureTime) > cb.resetTimeout {
+				cb.state = "half-open"
+				cb.mu.Unlock()
+				cb.logger.Info("Circuit breaker moving to half-open state", zap.Any("context", ctxData))
+			} else {
+				cb.mu.Unlock()
+				return Wrap(nil, ErrorTypeUnavailable, "circuit_breaker_open", "circuit breaker is open")
+			}
 		} else {
 			return Wrap(nil, ErrorTypeUnavailable, "circuit_breaker_open", "circuit breaker is open")
 		}
@@ -291,6 +319,9 @@ func (cb *CircuitBreaker) Execute(operation func() error, context map[string]int
 
 // recordFailure records a failure and updates circuit breaker state
 func (cb *CircuitBreaker) recordFailure() {
+	cb.mu.Lock()
+	defer cb.mu.Unlock()
+
 	cb.failures++
 	cb.lastFailureTime = time.Now()
 
@@ -302,6 +333,9 @@ func (cb *CircuitBreaker) recordFailure() {
 
 // recordSuccess records a success and resets failure count
 func (cb *CircuitBreaker) recordSuccess() {
+	cb.mu.Lock()
+	defer cb.mu.Unlock()
+
 	cb.failures = 0
 	if cb.state == "half-open" {
 		cb.state = "closed"
@@ -311,5 +345,7 @@ func (cb *CircuitBreaker) recordSuccess() {
 
 // GetState returns the current state of the circuit breaker
 func (cb *CircuitBreaker) GetState() string {
+	cb.mu.RLock()
+	defer cb.mu.RUnlock()
 	return cb.state
 }

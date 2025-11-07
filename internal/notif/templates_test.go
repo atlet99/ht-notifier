@@ -33,7 +33,7 @@ func TestMessageTemplates(t *testing.T) {
 	}
 
 	// Create template manager
-	tmplManager, err := NewMessageTemplates(logger, formatConfig, templateConfig)
+	tmplManager, err := NewMessageTemplates(logger, &formatConfig, templateConfig)
 	if err != nil {
 		t.Fatalf("Failed to create template manager: %v", err)
 	}
@@ -103,7 +103,7 @@ func TestTemplateFunctions(t *testing.T) {
 	}
 
 	// Create template manager (we don't need it for this test)
-	_, err = NewMessageTemplates(logger, formatConfig, templateConfig)
+	_, err = NewMessageTemplates(logger, &formatConfig, templateConfig)
 	if err != nil {
 		t.Fatalf("Failed to create template manager: %v", err)
 	}
@@ -159,7 +159,7 @@ func TestTemplateFunctions(t *testing.T) {
 
 	// Test template functions using the actual template manager
 	// Create a template manager with default templates to get access to functions
-	tmplManager, err := NewMessageTemplates(logger, formatConfig, config.TemplateConfig{
+	tmplManager, err := NewMessageTemplates(logger, &formatConfig, config.TemplateConfig{
 		Enabled:    false, // Use default templates
 		Path:       "",
 		Reload:     false,
@@ -220,7 +220,7 @@ func TestFileTemplateLoading(t *testing.T) {
 	}
 
 	// Create template manager
-	tmplManager, err := NewMessageTemplates(logger, formatConfig, templateConfig)
+	tmplManager, err := NewMessageTemplates(logger, &formatConfig, templateConfig)
 	if err != nil {
 		t.Fatalf("Failed to create template manager: %v", err)
 	}

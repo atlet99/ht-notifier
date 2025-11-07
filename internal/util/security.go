@@ -1,3 +1,4 @@
+// Package util provides utility functions for security operations.
 package util
 
 import (
@@ -13,6 +14,10 @@ import (
 	"time"
 
 	"go.uber.org/zap"
+)
+
+const (
+	hmacSignaturePartsCount = 2
 )
 
 // SecurityManager handles security features like HMAC verification and IP allowlisting
@@ -46,8 +51,8 @@ func (sm *SecurityManager) VerifyHMAC(r *http.Request) bool {
 	}
 
 	// Extract the algorithm and signature
-	parts := strings.SplitN(signature, "=", 2)
-	if len(parts) != 2 || parts[0] != "sha256" {
+	parts := strings.SplitN(signature, "=", hmacSignaturePartsCount)
+	if len(parts) != hmacSignaturePartsCount || parts[0] != "sha256" {
 		sm.logger.Warn("Invalid HMAC signature format", zap.String("signature", signature))
 		return false
 	}
@@ -110,34 +115,46 @@ func (sm *SecurityManager) IsAllowedIP(r *http.Request) bool {
 	return false
 }
 
+// createSecurityMiddleware creates a middleware that checks a condition and logs/rejects on failure
+func (sm *SecurityManager) createSecurityMiddleware(
+	check func(*http.Request) bool,
+	errorMsg string,
+	statusCode int,
+	logMsg string,
+) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if !check(r) {
+				sm.logger.Error(logMsg,
+					zap.String("method", r.Method),
+					zap.String("url", r.URL.String()),
+					zap.String("remote_addr", r.RemoteAddr))
+				http.Error(w, errorMsg, statusCode)
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
 // HMACMiddleware creates middleware for HMAC verification
 func (sm *SecurityManager) HMACMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !sm.VerifyHMAC(r) {
-			sm.logger.Error("HMAC verification failed, rejecting request",
-				zap.String("method", r.Method),
-				zap.String("url", r.URL.String()),
-				zap.String("remote_addr", r.RemoteAddr))
-			http.Error(w, "Unauthorized - Invalid HMAC signature", http.StatusUnauthorized)
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
+	return sm.createSecurityMiddleware(
+		sm.VerifyHMAC,
+		"Unauthorized - Invalid HMAC signature",
+		http.StatusUnauthorized,
+		"HMAC verification failed, rejecting request",
+	)(next)
 }
 
 // IPAllowlistMiddleware creates middleware for IP allowlisting
 func (sm *SecurityManager) IPAllowlistMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !sm.IsAllowedIP(r) {
-			sm.logger.Error("IP allowlist check failed, rejecting request",
-				zap.String("method", r.Method),
-				zap.String("url", r.URL.String()),
-				zap.String("remote_addr", r.RemoteAddr))
-			http.Error(w, "Forbidden - IP not allowed", http.StatusForbidden)
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
+	return sm.createSecurityMiddleware(
+		sm.IsAllowedIP,
+		"Forbidden - IP not allowed",
+		http.StatusForbidden,
+		"IP allowlist check failed, rejecting request",
+	)(next)
 }
 
 // getClientIP extracts the client IP from the request
@@ -216,7 +233,7 @@ func RequestSizeMiddleware(maxSize int64) func(http.Handler) http.Handler {
 }
 
 // CORS middleware for cross-origin requests (optional)
-func CORS(next http.Handler, allowedOrigins []string) http.Handler {
+func CORS(next http.Handler, _ []string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Set CORS headers
 		w.Header().Set("Access-Control-Allow-Origin", "*") // TODO: Make configurable

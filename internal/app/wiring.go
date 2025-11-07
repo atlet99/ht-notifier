@@ -1,3 +1,4 @@
+// Package app provides application wiring and dependency injection.
 package app
 
 import (
@@ -5,6 +6,9 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+
+	"github.com/prometheus/client_golang/prometheus"
+	"go.uber.org/zap"
 
 	"github.com/atlet99/ht-notifier/internal/config"
 	"github.com/atlet99/ht-notifier/internal/harbor"
@@ -15,8 +19,11 @@ import (
 	"github.com/atlet99/ht-notifier/internal/proc"
 	"github.com/atlet99/ht-notifier/internal/util"
 	"github.com/atlet99/ht-notifier/internal/version"
-	"github.com/prometheus/client_golang/prometheus"
-	"go.uber.org/zap"
+)
+
+const (
+	defaultRateLimitPerMinute = 30
+	defaultRateLimitBurst     = 10
 )
 
 // Wire sets up the application dependencies and returns a configured App instance
@@ -31,7 +38,7 @@ func Wire(cfg *config.Config) (*App, error) {
 		Level:  cfg.Observability.Log.Level,
 		Format: cfg.Observability.Log.Format,
 	}
-	logger, err := obs.NewLogger(loggerConfig)
+	logger, err := obs.NewLogger(&loggerConfig)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create logger: %w", err)
 	}
@@ -62,7 +69,7 @@ func Wire(cfg *config.Config) (*App, error) {
 	}
 
 	// Create message templates
-	templates, err := notif.NewMessageTemplates(logger, messageFormatConfig, templateConfig)
+	templates, err := notif.NewMessageTemplates(logger, &messageFormatConfig, templateConfig)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create message templates: %w", err)
 	}
@@ -136,11 +143,11 @@ func createNotifiers(cfg *config.Config, logger *zap.Logger) ([]notif.Notifier, 
 	var notifiers []notif.Notifier
 
 	// Create rate limiter
-	limiter := notif.NewRateLimiter(30, 10) // 30 requests per minute, burst of 10
+	limiter := notif.NewRateLimiter(defaultRateLimitPerMinute, defaultRateLimitBurst)
 
 	// Create email notifier if enabled
 	if cfg.Notify.Email.Enabled {
-		emailNotifier, err := notif.NewEmail(cfg.Notify.Email, limiter)
+		emailNotifier, err := notif.NewEmail(&cfg.Notify.Email, limiter)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create email notifier: %w", err)
 		}
@@ -150,7 +157,7 @@ func createNotifiers(cfg *config.Config, logger *zap.Logger) ([]notif.Notifier, 
 
 	// Create Telegram notifier if enabled
 	if cfg.Notify.Telegram.Enabled {
-		telegramNotifier, err := notif.NewTelegram(cfg.Notify.Telegram, limiter)
+		telegramNotifier, err := notif.NewTelegram(&cfg.Notify.Telegram, limiter)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create telegram notifier: %w", err)
 		}
@@ -160,7 +167,7 @@ func createNotifiers(cfg *config.Config, logger *zap.Logger) ([]notif.Notifier, 
 
 	// Create Slack notifier if enabled
 	if cfg.Notify.Slack.Enabled {
-		slackNotifier, err := notif.NewSlack(cfg.Notify.Slack, limiter)
+		slackNotifier, err := notif.NewSlack(&cfg.Notify.Slack, limiter)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create slack notifier: %w", err)
 		}
@@ -170,7 +177,7 @@ func createNotifiers(cfg *config.Config, logger *zap.Logger) ([]notif.Notifier, 
 
 	// Create Mattermost notifier if enabled
 	if cfg.Notify.Mattermost.Enabled {
-		mattermostNotifier, err := notif.NewMattermost(cfg.Notify.Mattermost, limiter)
+		mattermostNotifier, err := notif.NewMattermost(&cfg.Notify.Mattermost, limiter)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create mattermost notifier: %w", err)
 		}
@@ -188,11 +195,17 @@ func createNotifiers(cfg *config.Config, logger *zap.Logger) ([]notif.Notifier, 
 }
 
 // NewApp creates a new application instance with all dependencies
-func NewApp(cfg *config.Config, logger *zap.Logger, httpHandler *httpx.Handler, notifiers []notif.Notifier) (*App, error) {
+func NewApp(
+	cfg *config.Config,
+	logger *zap.Logger,
+	httpHandler *httpx.Handler,
+	notifiers []notif.Notifier,
+) (*App, error) {
 	// Create HTTP server
 	httpServer := &http.Server{
-		Addr:    cfg.Server.Addr,
-		Handler: httpHandler.Router(),
+		Addr:              cfg.Server.Addr,
+		Handler:           httpHandler.Router(),
+		ReadHeaderTimeout: defaultReadHeaderTimeout,
 	}
 
 	return &App{

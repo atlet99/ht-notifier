@@ -86,7 +86,7 @@ func TestNewTelegram(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			telegram, err := NewTelegram(tc.cfg, nil)
+			telegram, err := NewTelegram(&tc.cfg, nil)
 
 			if tc.expectError {
 				assert.Error(t, err)
@@ -111,7 +111,7 @@ func TestTelegram_Send(t *testing.T) {
 		Debug:         true, // Enable debug mode for testing
 	}
 
-	telegram, err := NewTelegram(cfg, nil)
+	telegram, err := NewTelegram(&cfg, nil)
 	require.NoError(t, err)
 	require.NotNil(t, telegram)
 
@@ -129,7 +129,7 @@ func TestTelegram_Send(t *testing.T) {
 		},
 	}
 
-	err = telegram.Send(context.Background(), msg)
+	err = telegram.Send(context.Background(), &msg)
 	assert.NoError(t, err)
 
 	// Check metrics
@@ -155,7 +155,7 @@ func TestTelegram_Send_WithRateLimiting(t *testing.T) {
 		Debug:         true,
 	}
 
-	telegram, err := NewTelegram(cfg, limiter)
+	telegram, err := NewTelegram(&cfg, limiter)
 	require.NoError(t, err)
 	require.NotNil(t, telegram)
 
@@ -165,7 +165,7 @@ func TestTelegram_Send_WithRateLimiting(t *testing.T) {
 		Body:  "Test body content",
 	}
 
-	err = telegram.Send(context.Background(), msg)
+	err = telegram.Send(context.Background(), &msg)
 	assert.NoError(t, err)
 
 	// Check that rate limiter was called
@@ -187,7 +187,7 @@ func TestTelegram_Send_RateLimitError(t *testing.T) {
 		Debug:         true,
 	}
 
-	telegram, err := NewTelegram(cfg, limiter)
+	telegram, err := NewTelegram(&cfg, limiter)
 	require.NoError(t, err)
 	require.NotNil(t, telegram)
 
@@ -197,7 +197,7 @@ func TestTelegram_Send_RateLimitError(t *testing.T) {
 		Body:  "Test body content",
 	}
 
-	err = telegram.Send(context.Background(), msg)
+	err = telegram.Send(context.Background(), &msg)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "rate limiter wait failed")
 
@@ -213,14 +213,14 @@ func TestTelegram_formatMessage(t *testing.T) {
 		BotToken: "test-bot-token",
 		ChatID:   "123456789",
 		MessageFormat: config.MessageFormatConfig{
-			CustomPrefix:    "[TEST]",
-			CustomSuffix:    "Regards",
-			EscapeMarkdown:  true,
+			CustomPrefix:      "[TEST]",
+			CustomSuffix:      "Regards",
+			EscapeMarkdown:    true,
 			DisableWebPreview: true,
-			EnableHTML:       false,
-			ShowTimestamp:    true,
-			IncludeSeverity:  true,
-			MaxMessageLength: 4096,
+			EnableHTML:        false,
+			ShowTimestamp:     true,
+			IncludeSeverity:   true,
+			MaxMessageLength:  4096,
 			SeverityColors: config.SeverityColors{
 				Critical: "🔴",
 				High:     "🟠",
@@ -231,7 +231,7 @@ func TestTelegram_formatMessage(t *testing.T) {
 		},
 	}
 
-	telegram, err := NewTelegram(cfg, nil)
+	telegram, err := NewTelegram(&cfg, nil)
 	require.NoError(t, err)
 
 	testCases := []struct {
@@ -294,7 +294,7 @@ func TestTelegram_formatMessage(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			result := telegram.formatMessage(tc.msg)
+			result := telegram.formatMessage(&tc.msg)
 			assert.Contains(t, result, tc.expected)
 		})
 	}
@@ -309,7 +309,7 @@ func TestTelegram_formatMessage_EscapeMarkdown(t *testing.T) {
 		},
 	}
 
-	telegram, err := NewTelegram(cfg, nil)
+	telegram, err := NewTelegram(&cfg, nil)
 	require.NoError(t, err)
 
 	msg := Message{
@@ -317,7 +317,7 @@ func TestTelegram_formatMessage_EscapeMarkdown(t *testing.T) {
 		Body:  "Test *body* [with] special _characters_",
 	}
 
-	result := telegram.formatMessage(msg)
+	result := telegram.formatMessage(&msg)
 	assert.Contains(t, result, "\\*Test \\*Title\\* \\[with\\] special \\_characters\\_")
 	assert.Contains(t, result, "\\*Test \\*body\\* \\[with\\] special \\_characters\\_")
 }
@@ -331,7 +331,7 @@ func TestTelegram_formatMessage_Truncate(t *testing.T) {
 		},
 	}
 
-	telegram, err := NewTelegram(cfg, nil)
+	telegram, err := NewTelegram(&cfg, nil)
 	require.NoError(t, err)
 
 	msg := Message{
@@ -339,7 +339,7 @@ func TestTelegram_formatMessage_Truncate(t *testing.T) {
 		Body:  "This is a very long body that should be truncated",
 	}
 
-	result := telegram.formatMessage(msg)
+	result := telegram.formatMessage(&msg)
 	assert.LessOrEqual(t, len(result), 10)
 	assert.Contains(t, result, "...")
 }
@@ -447,7 +447,7 @@ func TestTelegram_TestConnection(t *testing.T) {
 		Debug:         true,
 	}
 
-	telegram, err := NewTelegram(cfg, nil)
+	telegram, err := NewTelegram(&cfg, nil)
 	require.NoError(t, err)
 
 	// Test connection (this will fail with a mock bot, but we're testing the structure)
@@ -465,7 +465,7 @@ func TestTelegram_GetBotInfo(t *testing.T) {
 		Debug:         true,
 	}
 
-	telegram, err := NewTelegram(cfg, nil)
+	telegram, err := NewTelegram(&cfg, nil)
 	require.NoError(t, err)
 
 	// Get bot info (this will fail with a mock bot, but we're testing the structure)
@@ -483,7 +483,7 @@ func TestTelegram_GetChatInfo(t *testing.T) {
 		Debug:         true,
 	}
 
-	telegram, err := NewTelegram(cfg, nil)
+	telegram, err := NewTelegram(&cfg, nil)
 	require.NoError(t, err)
 
 	// Get chat info (this will fail with a mock bot, but we're testing the structure)

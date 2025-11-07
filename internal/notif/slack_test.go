@@ -67,7 +67,7 @@ func TestSlackMessageFormatting(t *testing.T) {
 	}
 
 	// Test message formatting
-	formattedMsg := slackNotifier.formatMessage(testMessage)
+	formattedMsg := slackNotifier.formatMessage(&testMessage)
 	if formattedMsg == "" {
 		t.Error("Formatted message should not be empty")
 	}
@@ -158,7 +158,7 @@ func TestSlackAttachmentColors(t *testing.T) {
 		msg := Message{
 			Labels: map[string]string{"severity": tc.severity},
 		}
-		result := slackNotifier.getAttachmentColor(msg)
+		result := slackNotifier.getAttachmentColor(&msg)
 		if result != tc.expected {
 			t.Errorf("Expected %s for severity %s, got %s", tc.expected, tc.severity, result)
 		}
@@ -231,7 +231,7 @@ func TestSlackMessageOptions(t *testing.T) {
 		},
 	}
 
-	options := slackNotifier.getMessageOptions(testMessage)
+	options := slackNotifier.getMessageOptions(&testMessage)
 	if len(options) == 0 {
 		t.Error("Should return message options")
 	}
@@ -242,7 +242,7 @@ func TestSlackMessageOptions(t *testing.T) {
 		Body:  "Test body",
 	}
 
-	optionsNoMeta := slackNotifier.getMessageOptions(testMessageNoMeta)
+	optionsNoMeta := slackNotifier.getMessageOptions(&testMessageNoMeta)
 	if len(optionsNoMeta) == 0 {
 		t.Error("Should return message options even without metadata")
 	}
@@ -256,7 +256,7 @@ func TestSlackValidation(t *testing.T) {
 		Channel: "#test-channel",
 	}
 
-	_, err := NewSlack(disabledConfig, nil)
+	_, err := NewSlack(&disabledConfig, nil)
 	if err == nil {
 		t.Error("Should return error when Slack is disabled")
 	}
@@ -268,7 +268,7 @@ func TestSlackValidation(t *testing.T) {
 		Channel: "#test-channel",
 	}
 
-	_, err = NewSlack(noTokenConfig, nil)
+	_, err = NewSlack(&noTokenConfig, nil)
 	if err == nil {
 		t.Error("Should return error when token is missing")
 	}
@@ -280,7 +280,7 @@ func TestSlackValidation(t *testing.T) {
 		Channel: "",
 	}
 
-	_, err = NewSlack(noChannelConfig, nil)
+	_, err = NewSlack(&noChannelConfig, nil)
 	if err == nil {
 		t.Error("Should return error when channel is missing")
 	}

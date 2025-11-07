@@ -10,39 +10,39 @@ import (
 
 	"github.com/atlet99/ht-notifier/internal/config"
 	"github.com/atlet99/ht-notifier/internal/harbor"
+	"github.com/atlet99/ht-notifier/internal/notif"
 	"github.com/atlet99/ht-notifier/internal/obs"
 	"github.com/atlet99/ht-notifier/internal/proc"
 	"github.com/atlet99/ht-notifier/internal/util"
-	"github.com/atlet99/ht-notifier/internal/notif"
+	"github.com/go-chi/chi/v5"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
-	"github.com/go-chi/chi/v5"
 )
 
 func TestNewWebhookHandler(t *testing.T) {
 	// Create test dependencies
 	logger, err := zap.NewProduction()
 	require.NoError(t, err)
-	
+
 	securityManager := util.NewSecurityManager("test-secret", []string{"192.168.1.1"}, logger)
-	
+
 	// Create a mock harbor client
 	harborClient := &harbor.Client{}
-	
+
 	// Create empty notifiers slice
 	var notifiers []notif.Notifier
-	
+
 	// Create metrics
 	metrics := obs.NewMetrics(prometheus.DefaultRegisterer, "test")
-	
+
 	// Create templates
 	templates := &notif.MessageTemplates{}
-	
+
 	// Create processing config
 	processingConfig := &config.ProcessingConfig{}
-	
+
 	eventProcessor := proc.NewHarborEventProcessor(harborClient, notifiers, logger, metrics, templates, processingConfig)
 
 	authConfig := AuthConfig{
@@ -52,7 +52,7 @@ func TestNewWebhookHandler(t *testing.T) {
 		RequireAuth:  true,
 	}
 
-	handler := NewWebhookHandler(securityManager, eventProcessor, logger, 1024*1024, metrics, authConfig)
+	handler := NewWebhookHandler(securityManager, eventProcessor, logger, 1024*1024, metrics, &authConfig)
 	require.NotNil(t, handler)
 	assert.Equal(t, securityManager, handler.securityManager)
 	assert.Equal(t, eventProcessor, handler.eventProcessor)
@@ -66,24 +66,24 @@ func TestWebhookHandler_HandleHarborWebhook(t *testing.T) {
 	// Create test dependencies
 	logger, err := zap.NewProduction()
 	require.NoError(t, err)
-	
+
 	securityManager := util.NewSecurityManager("test-secret", []string{"192.168.1.1"}, logger)
-	
+
 	// Create a mock harbor client
 	harborClient := &harbor.Client{}
-	
+
 	// Create empty notifiers slice
 	var notifiers []notif.Notifier
-	
+
 	// Create metrics
 	metrics := obs.NewMetrics(prometheus.DefaultRegisterer, "test")
-	
+
 	// Create templates
 	templates := &notif.MessageTemplates{}
-	
+
 	// Create processing config
 	processingConfig := &config.ProcessingConfig{}
-	
+
 	eventProcessor := proc.NewHarborEventProcessor(harborClient, notifiers, logger, metrics, templates, processingConfig)
 
 	authConfig := AuthConfig{
@@ -93,13 +93,13 @@ func TestWebhookHandler_HandleHarborWebhook(t *testing.T) {
 		RequireAuth:  false, // Disable auth for this test
 	}
 
-	handler := NewWebhookHandler(securityManager, eventProcessor, logger, 1024*1024, metrics, authConfig)
+	handler := NewWebhookHandler(securityManager, eventProcessor, logger, 1024*1024, metrics, &authConfig)
 
 	// Create a test webhook event
 	webhookEvent := map[string]interface{}{
-		"type":      "SCANNING_COMPLETE",
-		"occur_at":  time.Now().Unix(),
-		"operator":  "test-operator",
+		"type":     "SCANNING_COMPLETE",
+		"occur_at": time.Now().Unix(),
+		"operator": "test-operator",
 		"event_data": map[string]interface{}{
 			"resources": []interface{}{
 				map[string]interface{}{
@@ -147,24 +147,24 @@ func TestWebhookHandler_HandleHarborWebhook_InvalidJSON(t *testing.T) {
 	// Create test dependencies
 	logger, err := zap.NewProduction()
 	require.NoError(t, err)
-	
+
 	securityManager := util.NewSecurityManager("test-secret", []string{"192.168.1.1"}, logger)
-	
+
 	// Create a mock harbor client
 	harborClient := &harbor.Client{}
-	
+
 	// Create empty notifiers slice
 	var notifiers []notif.Notifier
-	
+
 	// Create metrics
 	metrics := obs.NewMetrics(prometheus.DefaultRegisterer, "test")
-	
+
 	// Create templates
 	templates := &notif.MessageTemplates{}
-	
+
 	// Create processing config
 	processingConfig := &config.ProcessingConfig{}
-	
+
 	eventProcessor := proc.NewHarborEventProcessor(harborClient, notifiers, logger, metrics, templates, processingConfig)
 
 	authConfig := AuthConfig{
@@ -174,7 +174,7 @@ func TestWebhookHandler_HandleHarborWebhook_InvalidJSON(t *testing.T) {
 		RequireAuth:  false,
 	}
 
-	handler := NewWebhookHandler(securityManager, eventProcessor, logger, 1024*1024, metrics, authConfig)
+	handler := NewWebhookHandler(securityManager, eventProcessor, logger, 1024*1024, metrics, &authConfig)
 
 	// Create invalid JSON
 	invalidJSON := `{"invalid": json}`
@@ -199,24 +199,24 @@ func TestWebhookHandler_HandleHarborWebhook_MissingEventType(t *testing.T) {
 	// Create test dependencies
 	logger, err := zap.NewProduction()
 	require.NoError(t, err)
-	
+
 	securityManager := util.NewSecurityManager("test-secret", []string{"192.168.1.1"}, logger)
-	
+
 	// Create a mock harbor client
 	harborClient := &harbor.Client{}
-	
+
 	// Create empty notifiers slice
 	var notifiers []notif.Notifier
-	
+
 	// Create metrics
 	metrics := obs.NewMetrics(prometheus.DefaultRegisterer, "test")
-	
+
 	// Create templates
 	templates := &notif.MessageTemplates{}
-	
+
 	// Create processing config
 	processingConfig := &config.ProcessingConfig{}
-	
+
 	eventProcessor := proc.NewHarborEventProcessor(harborClient, notifiers, logger, metrics, templates, processingConfig)
 
 	authConfig := AuthConfig{
@@ -226,12 +226,12 @@ func TestWebhookHandler_HandleHarborWebhook_MissingEventType(t *testing.T) {
 		RequireAuth:  false,
 	}
 
-	handler := NewWebhookHandler(securityManager, eventProcessor, logger, 1024*1024, metrics, authConfig)
+	handler := NewWebhookHandler(securityManager, eventProcessor, logger, 1024*1024, metrics, &authConfig)
 
 	// Create webhook event without type
 	webhookEvent := map[string]interface{}{
-		"occur_at":  time.Now().Unix(),
-		"operator":  "test-operator",
+		"occur_at": time.Now().Unix(),
+		"operator": "test-operator",
 		"event_data": map[string]interface{}{
 			"resources": []interface{}{
 				map[string]interface{}{
@@ -265,24 +265,24 @@ func TestWebhookHandler_HandleTestWebhook(t *testing.T) {
 	// Create test dependencies
 	logger, err := zap.NewProduction()
 	require.NoError(t, err)
-	
+
 	securityManager := util.NewSecurityManager("test-secret", []string{"192.168.1.1"}, logger)
-	
+
 	// Create a mock harbor client
 	harborClient := &harbor.Client{}
-	
+
 	// Create empty notifiers slice
 	var notifiers []notif.Notifier
-	
+
 	// Create metrics
 	metrics := obs.NewMetrics(prometheus.DefaultRegisterer, "test")
-	
+
 	// Create templates
 	templates := &notif.MessageTemplates{}
-	
+
 	// Create processing config
 	processingConfig := &config.ProcessingConfig{}
-	
+
 	eventProcessor := proc.NewHarborEventProcessor(harborClient, notifiers, logger, metrics, templates, processingConfig)
 
 	authConfig := AuthConfig{
@@ -292,7 +292,7 @@ func TestWebhookHandler_HandleTestWebhook(t *testing.T) {
 		RequireAuth:  false,
 	}
 
-	handler := NewWebhookHandler(securityManager, eventProcessor, logger, 1024*1024, metrics, authConfig)
+	handler := NewWebhookHandler(securityManager, eventProcessor, logger, 1024*1024, metrics, &authConfig)
 
 	// Create a test request
 	req, err := http.NewRequest("POST", "/webhook/harbor/test", bytes.NewBuffer([]byte{}))
@@ -313,24 +313,24 @@ func TestWebhookHandler_authenticateRequest(t *testing.T) {
 	// Create test dependencies
 	logger, err := zap.NewProduction()
 	require.NoError(t, err)
-	
+
 	securityManager := util.NewSecurityManager("test-secret", []string{"192.168.1.1"}, logger)
-	
+
 	// Create a mock harbor client
 	harborClient := &harbor.Client{}
-	
+
 	// Create empty notifiers slice
 	var notifiers []notif.Notifier
-	
+
 	// Create metrics
 	metrics := obs.NewMetrics(prometheus.DefaultRegisterer, "test")
-	
+
 	// Create templates
 	templates := &notif.MessageTemplates{}
-	
+
 	// Create processing config
 	processingConfig := &config.ProcessingConfig{}
-	
+
 	eventProcessor := proc.NewHarborEventProcessor(harborClient, notifiers, logger, metrics, templates, processingConfig)
 
 	testCases := []struct {
@@ -354,7 +354,7 @@ func TestWebhookHandler_authenticateRequest(t *testing.T) {
 		{
 			name: "API key authentication - valid",
 			authConfig: AuthConfig{
-				RequireAuth: true,
+				RequireAuth:  true,
 				APIKeyHeader: "X-API-Key",
 				APIKey:       "test-api-key",
 			},
@@ -368,7 +368,7 @@ func TestWebhookHandler_authenticateRequest(t *testing.T) {
 		{
 			name: "API key authentication - invalid",
 			authConfig: AuthConfig{
-				RequireAuth: true,
+				RequireAuth:  true,
 				APIKeyHeader: "X-API-Key",
 				APIKey:       "test-api-key",
 			},
@@ -411,7 +411,9 @@ func TestWebhookHandler_authenticateRequest(t *testing.T) {
 			name: "JWT token - missing header",
 			authConfig: AuthConfig{
 				RequireAuth: true,
-				JWTSecret:   "test-jwt-secret",
+				JWT: config.JWTConfig{
+					Secret: "test-jwt-secret",
+				},
 			},
 			req: func() *http.Request {
 				req, _ := http.NewRequest("POST", "/webhook/harbor", bytes.NewBuffer([]byte{}))
@@ -424,7 +426,9 @@ func TestWebhookHandler_authenticateRequest(t *testing.T) {
 			name: "JWT token - valid format",
 			authConfig: AuthConfig{
 				RequireAuth: true,
-				JWTSecret:   "test-jwt-secret",
+				JWT: config.JWTConfig{
+					Secret: "test-jwt-secret",
+				},
 			},
 			req: func() *http.Request {
 				req, _ := http.NewRequest("POST", "/webhook/harbor", bytes.NewBuffer([]byte{}))
@@ -437,10 +441,10 @@ func TestWebhookHandler_authenticateRequest(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			handler := NewWebhookHandler(securityManager, eventProcessor, logger, 1024*1024, metrics, tc.authConfig)
-			
+			handler := NewWebhookHandler(securityManager, eventProcessor, logger, 1024*1024, metrics, &tc.authConfig)
+
 			err := handler.authenticateRequest(tc.req)
-			
+
 			if tc.expectError {
 				assert.Error(t, err)
 				assert.Contains(t, err.Error(), tc.errorMsg)
@@ -455,62 +459,62 @@ func TestWebhookHandler_isIPAllowed(t *testing.T) {
 	// Create test dependencies
 	logger, err := zap.NewProduction()
 	require.NoError(t, err)
-	
+
 	securityManager := util.NewSecurityManager("test-secret", []string{"192.168.1.1"}, logger)
-	
+
 	// Create a mock harbor client
 	harborClient := &harbor.Client{}
-	
+
 	// Create empty notifiers slice
 	var notifiers []notif.Notifier
-	
+
 	// Create metrics
 	metrics := obs.NewMetrics(prometheus.DefaultRegisterer, "test")
-	
+
 	// Create templates
 	templates := &notif.MessageTemplates{}
-	
+
 	// Create processing config
 	processingConfig := &config.ProcessingConfig{}
-	
+
 	eventProcessor := proc.NewHarborEventProcessor(harborClient, notifiers, logger, metrics, templates, processingConfig)
 
-	handler := NewWebhookHandler(securityManager, eventProcessor, logger, 1024*1024, metrics, AuthConfig{})
+	handler := NewWebhookHandler(securityManager, eventProcessor, logger, 1024*1024, metrics, &AuthConfig{})
 
 	testCases := []struct {
-		name         string
-		remoteAddr   string
-		allowedIPs   []string
+		name          string
+		remoteAddr    string
+		allowedIPs    []string
 		expectAllowed bool
 	}{
 		{
-			name:         "Exact match",
-			remoteAddr:   "192.168.1.1:12345",
-			allowedIPs:   []string{"192.168.1.1"},
+			name:          "Exact match",
+			remoteAddr:    "192.168.1.1:12345",
+			allowedIPs:    []string{"192.168.1.1"},
 			expectAllowed: true,
 		},
 		{
-			name:         "No match",
-			remoteAddr:   "10.0.0.1:12345",
-			allowedIPs:   []string{"192.168.1.1"},
+			name:          "No match",
+			remoteAddr:    "10.0.0.1:12345",
+			allowedIPs:    []string{"192.168.1.1"},
 			expectAllowed: false,
 		},
 		{
-			name:         "CIDR match",
-			remoteAddr:   "192.168.1.100:12345",
-			allowedIPs:   []string{"192.168.1.0/24"},
+			name:          "CIDR match",
+			remoteAddr:    "192.168.1.100:12345",
+			allowedIPs:    []string{"192.168.1.0/24"},
 			expectAllowed: true,
 		},
 		{
-			name:         "CIDR no match",
-			remoteAddr:   "10.0.0.1:12345",
-			allowedIPs:   []string{"192.168.1.0/24"},
+			name:          "CIDR no match",
+			remoteAddr:    "10.0.0.1:12345",
+			allowedIPs:    []string{"192.168.1.0/24"},
 			expectAllowed: false,
 		},
 		{
-			name:         "Mixed allowed IPs",
-			remoteAddr:   "192.168.1.100:12345",
-			allowedIPs:   []string{"192.168.1.1", "192.168.1.0/24"},
+			name:          "Mixed allowed IPs",
+			remoteAddr:    "192.168.1.100:12345",
+			allowedIPs:    []string{"192.168.1.1", "192.168.1.0/24"},
 			expectAllowed: true,
 		},
 	}
@@ -528,27 +532,27 @@ func TestWebhookHandler_validateJWTToken(t *testing.T) {
 	// Create test dependencies
 	logger, err := zap.NewProduction()
 	require.NoError(t, err)
-	
+
 	securityManager := util.NewSecurityManager("test-secret", []string{"192.168.1.1"}, logger)
-	
+
 	// Create a mock harbor client
 	harborClient := &harbor.Client{}
-	
+
 	// Create empty notifiers slice
 	var notifiers []notif.Notifier
-	
+
 	// Create metrics
 	metrics := obs.NewMetrics(prometheus.DefaultRegisterer, "test")
-	
+
 	// Create templates
 	templates := &notif.MessageTemplates{}
-	
+
 	// Create processing config
 	processingConfig := &config.ProcessingConfig{}
-	
+
 	eventProcessor := proc.NewHarborEventProcessor(harborClient, notifiers, logger, metrics, templates, processingConfig)
 
-	handler := NewWebhookHandler(securityManager, eventProcessor, logger, 1024*1024, metrics, AuthConfig{})
+	handler := NewWebhookHandler(securityManager, eventProcessor, logger, 1024*1024, metrics, &AuthConfig{})
 
 	testCases := []struct {
 		name        string
@@ -589,27 +593,27 @@ func TestWebhookHandler_RegisterRoutes(t *testing.T) {
 	// Create test dependencies
 	logger, err := zap.NewProduction()
 	require.NoError(t, err)
-	
+
 	securityManager := util.NewSecurityManager("test-secret", []string{"192.168.1.1"}, logger)
-	
+
 	// Create a mock harbor client
 	harborClient := &harbor.Client{}
-	
+
 	// Create empty notifiers slice
 	var notifiers []notif.Notifier
-	
+
 	// Create metrics
 	metrics := obs.NewMetrics(prometheus.DefaultRegisterer, "test")
-	
+
 	// Create templates
 	templates := &notif.MessageTemplates{}
-	
+
 	// Create processing config
 	processingConfig := &config.ProcessingConfig{}
-	
+
 	eventProcessor := proc.NewHarborEventProcessor(harborClient, notifiers, logger, metrics, templates, processingConfig)
 
-	handler := NewWebhookHandler(securityManager, eventProcessor, logger, 1024*1024, metrics, AuthConfig{})
+	handler := NewWebhookHandler(securityManager, eventProcessor, logger, 1024*1024, metrics, &AuthConfig{})
 
 	// Create a test router using chi.NewRouter()
 	router := chi.NewRouter()

@@ -212,11 +212,11 @@ harbor:
 	require.NotNil(t, cfg)
 
 	// Environment variables should override file values
-	assert.Equal(t, "8081", cfg.Server.Addr) // From env
-	assert.Equal(t, "env-host", cfg.Server.Addr) // From env
+	assert.Equal(t, "8081", cfg.Server.Addr)                          // From env
+	assert.Equal(t, "env-host", cfg.Server.Addr)                      // From env
 	assert.Equal(t, "https://harbor.example.org", cfg.Harbor.BaseURL) // From env
-	assert.Equal(t, "envuser", cfg.Harbor.Username) // From env
-	assert.Equal(t, "envpass", cfg.Harbor.Password) // From env
+	assert.Equal(t, "envuser", cfg.Harbor.Username)                   // From env
+	assert.Equal(t, "envpass", cfg.Harbor.Password)                   // From env
 }
 
 func TestValidateConfig_Valid(t *testing.T) {
@@ -239,11 +239,11 @@ func TestValidateConfig_Valid(t *testing.T) {
 		},
 		Notify: NotifyConfig{
 			Telegram: TelegramConfig{
-				Enabled:   true,
-				BotToken:  "test-token",
-				ChatID:    "123456789",
+				Enabled:       true,
+				BotToken:      "test-token",
+				ChatID:        "123456789",
 				RatePerMinute: 30,
-				Timeout:   30 * time.Second,
+				Timeout:       30 * time.Second,
 				MessageFormat: MessageFormatConfig{
 					MaxMessageLength: 4096,
 					SeverityColors: SeverityColors{
@@ -495,9 +495,9 @@ func TestIsNotificationEnabled(t *testing.T) {
 		{
 			name: "No notifiers enabled",
 			cfg: NotifyConfig{
-				Telegram: TelegramConfig{Enabled: false},
-				Email:    EmailConfig{Enabled: false},
-				Slack:    SlackConfig{Enabled: false},
+				Telegram:   TelegramConfig{Enabled: false},
+				Email:      EmailConfig{Enabled: false},
+				Slack:      SlackConfig{Enabled: false},
 				Mattermost: MattermostConfig{Enabled: false},
 			},
 			expected: false,
@@ -505,9 +505,9 @@ func TestIsNotificationEnabled(t *testing.T) {
 		{
 			name: "Telegram enabled",
 			cfg: NotifyConfig{
-				Telegram: TelegramConfig{Enabled: true},
-				Email:    EmailConfig{Enabled: false},
-				Slack:    SlackConfig{Enabled: false},
+				Telegram:   TelegramConfig{Enabled: true},
+				Email:      EmailConfig{Enabled: false},
+				Slack:      SlackConfig{Enabled: false},
 				Mattermost: MattermostConfig{Enabled: false},
 			},
 			expected: true,
@@ -515,9 +515,9 @@ func TestIsNotificationEnabled(t *testing.T) {
 		{
 			name: "Email enabled",
 			cfg: NotifyConfig{
-				Telegram: TelegramConfig{Enabled: false},
-				Email:    EmailConfig{Enabled: true},
-				Slack:    SlackConfig{Enabled: false},
+				Telegram:   TelegramConfig{Enabled: false},
+				Email:      EmailConfig{Enabled: true},
+				Slack:      SlackConfig{Enabled: false},
 				Mattermost: MattermostConfig{Enabled: false},
 			},
 			expected: true,
@@ -525,9 +525,9 @@ func TestIsNotificationEnabled(t *testing.T) {
 		{
 			name: "Multiple notifiers enabled",
 			cfg: NotifyConfig{
-				Telegram: TelegramConfig{Enabled: true},
-				Email:    EmailConfig{Enabled: true},
-				Slack:    SlackConfig{Enabled: false},
+				Telegram:   TelegramConfig{Enabled: true},
+				Email:      EmailConfig{Enabled: true},
+				Slack:      SlackConfig{Enabled: false},
 				Mattermost: MattermostConfig{Enabled: false},
 			},
 			expected: true,
@@ -555,9 +555,9 @@ func TestGetEnabledNotifiers(t *testing.T) {
 		{
 			name: "No notifiers enabled",
 			cfg: NotifyConfig{
-				Telegram: TelegramConfig{Enabled: false},
-				Email:    EmailConfig{Enabled: false},
-				Slack:    SlackConfig{Enabled: false},
+				Telegram:   TelegramConfig{Enabled: false},
+				Email:      EmailConfig{Enabled: false},
+				Slack:      SlackConfig{Enabled: false},
 				Mattermost: MattermostConfig{Enabled: false},
 			},
 			expected: []string{},
@@ -565,9 +565,9 @@ func TestGetEnabledNotifiers(t *testing.T) {
 		{
 			name: "Telegram enabled",
 			cfg: NotifyConfig{
-				Telegram: TelegramConfig{Enabled: true},
-				Email:    EmailConfig{Enabled: false},
-				Slack:    SlackConfig{Enabled: false},
+				Telegram:   TelegramConfig{Enabled: true},
+				Email:      EmailConfig{Enabled: false},
+				Slack:      SlackConfig{Enabled: false},
 				Mattermost: MattermostConfig{Enabled: false},
 			},
 			expected: []string{"telegram"},
@@ -575,9 +575,9 @@ func TestGetEnabledNotifiers(t *testing.T) {
 		{
 			name: "Email enabled",
 			cfg: NotifyConfig{
-				Telegram: TelegramConfig{Enabled: false},
-				Email:    EmailConfig{Enabled: true},
-				Slack:    SlackConfig{Enabled: false},
+				Telegram:   TelegramConfig{Enabled: false},
+				Email:      EmailConfig{Enabled: true},
+				Slack:      SlackConfig{Enabled: false},
 				Mattermost: MattermostConfig{Enabled: false},
 			},
 			expected: []string{"email"},
@@ -585,9 +585,9 @@ func TestGetEnabledNotifiers(t *testing.T) {
 		{
 			name: "Multiple notifiers enabled",
 			cfg: NotifyConfig{
-				Telegram: TelegramConfig{Enabled: true},
-				Email:    EmailConfig{Enabled: true},
-				Slack:    SlackConfig{Enabled: true},
+				Telegram:   TelegramConfig{Enabled: true},
+				Email:      EmailConfig{Enabled: true},
+				Slack:      SlackConfig{Enabled: true},
 				Mattermost: MattermostConfig{Enabled: false},
 			},
 			expected: []string{"telegram", "email", "slack"},

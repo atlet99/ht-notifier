@@ -1,3 +1,4 @@
+// Package health provides health check functionality for application components.
 package health
 
 import (
@@ -8,10 +9,19 @@ import (
 	"strings"
 	"time"
 
+	"go.uber.org/zap"
+
 	"github.com/atlet99/ht-notifier/internal/config"
 	"github.com/atlet99/ht-notifier/internal/harbor"
 	"github.com/atlet99/ht-notifier/internal/notif"
-	"go.uber.org/zap"
+)
+
+const (
+	bytesPerKB         = 1024
+	bytesPerMB         = bytesPerKB * bytesPerKB
+	exampleAllocMB     = 10
+	exampleSysMB       = 50
+	healthCheckTimeout = 10 * time.Second
 )
 
 // Checker defines the interface for health checks
@@ -35,22 +45,22 @@ const (
 	StatusDegraded  = "degraded"
 )
 
-// HealthChecker combines multiple health checks
-type HealthChecker struct {
+// CompositeChecker combines multiple health checks
+type CompositeChecker struct {
 	checkers []Checker
 	logger   *zap.Logger
 }
 
 // NewHealthChecker creates a new health checker
-func NewHealthChecker(logger *zap.Logger, checkers ...Checker) *HealthChecker {
-	return &HealthChecker{
+func NewHealthChecker(logger *zap.Logger, checkers ...Checker) *CompositeChecker {
+	return &CompositeChecker{
 		checkers: checkers,
 		logger:   logger,
 	}
 }
 
 // Check performs health checks on all registered checkers
-func (h *HealthChecker) Check(ctx context.Context) (Status, error) {
+func (h *CompositeChecker) Check(ctx context.Context) (Status, error) {
 	overallStatus := StatusHealthy
 	details := make(map[string]interface{})
 
@@ -126,7 +136,7 @@ func (h *HarborChecker) Check(ctx context.Context) (Status, error) {
 					"error":      err.Error(),
 					"latency_ms": time.Since(start).Milliseconds(),
 				},
-			}, fmt.Errorf("Harbor connection failed: %w", err)
+			}, fmt.Errorf("harbor connection failed: %w", err)
 		}
 		// If it's a 404 or similar, that means we can connect but the project doesn't exist
 		// which is fine for a health check
@@ -188,7 +198,7 @@ func (h *NotifierChecker) Check(ctx context.Context) (Status, error) {
 
 		// For now, just check if the notifier can be instantiated
 		// In a real implementation, you might send a test message
-		err := notifier.Send(ctx, notif.Message{
+		testMsg := notif.Message{
 			Title:  "Health Check",
 			Body:   "This is a test message to verify notifier connectivity",
 			Link:   "",
@@ -196,7 +206,8 @@ func (h *NotifierChecker) Check(ctx context.Context) (Status, error) {
 			Metadata: map[string]interface{}{
 				"timestamp": time.Now().UTC(),
 			},
-		})
+		}
+		err := notifier.Send(ctx, &testMsg)
 
 		if err != nil {
 			h.logger.Warn("Notifier health check failed",
@@ -259,7 +270,7 @@ func (h *SystemChecker) Name() string {
 }
 
 // Check verifies system resources
-func (h *SystemChecker) Check(ctx context.Context) (Status, error) {
+func (h *SystemChecker) Check(_ context.Context) (Status, error) {
 	// Check memory usage
 	var memStats struct {
 		Alloc      uint64 `json:"alloc"`
@@ -270,8 +281,8 @@ func (h *SystemChecker) Check(ctx context.Context) (Status, error) {
 
 	// In a real implementation, you would use runtime.ReadMemStats
 	// For now, we'll just return a healthy status
-	memStats.Alloc = 1024 * 1024 * 10 // 10MB as example
-	memStats.Sys = 1024 * 1024 * 50   // 50MB as example
+	memStats.Alloc = bytesPerMB * exampleAllocMB
+	memStats.Sys = bytesPerMB * exampleSysMB
 
 	// Check if we're using too much memory (arbitrary threshold of 500MB)
 	if memStats.Sys > 500*1024*1024 {
@@ -281,7 +292,7 @@ func (h *SystemChecker) Check(ctx context.Context) (Status, error) {
 			Timestamp: time.Now().UTC(),
 			Details: map[string]interface{}{
 				"memory_usage_bytes": memStats.Sys,
-				"memory_usage_mb":    memStats.Sys / 1024 / 1024,
+				"memory_usage_mb":    memStats.Sys / bytesPerMB,
 			},
 		}, fmt.Errorf("high memory usage: %d bytes", memStats.Sys)
 	}
@@ -292,7 +303,7 @@ func (h *SystemChecker) Check(ctx context.Context) (Status, error) {
 		Timestamp: time.Now().UTC(),
 		Details: map[string]interface{}{
 			"memory_usage_bytes": memStats.Sys,
-			"memory_usage_mb":    memStats.Sys / 1024 / 1024,
+			"memory_usage_mb":    memStats.Sys / bytesPerMB,
 			"alloc_bytes":        memStats.Alloc,
 			"total_alloc_bytes":  memStats.TotalAlloc,
 			"gc_count":           memStats.NumGC,
@@ -320,7 +331,7 @@ func (h *ConfigChecker) Name() string {
 }
 
 // Check validates configuration
-func (h *ConfigChecker) Check(ctx context.Context) (Status, error) {
+func (h *ConfigChecker) Check(_ context.Context) (Status, error) {
 	// Validate basic configuration
 	if h.config.Server.Addr == "" {
 		return Status{
@@ -396,12 +407,12 @@ func (h *ConfigChecker) Check(ctx context.Context) (Status, error) {
 
 // HTTPHandler handles HTTP health check requests
 type HTTPHandler struct {
-	healthChecker *HealthChecker
+	healthChecker *CompositeChecker
 	logger        *zap.Logger
 }
 
 // NewHTTPHandler creates a new HTTP health check handler
-func NewHTTPHandler(healthChecker *HealthChecker, logger *zap.Logger) *HTTPHandler {
+func NewHTTPHandler(healthChecker *CompositeChecker, logger *zap.Logger) *HTTPHandler {
 	return &HTTPHandler{
 		healthChecker: healthChecker,
 		logger:        logger,
@@ -410,7 +421,7 @@ func NewHTTPHandler(healthChecker *HealthChecker, logger *zap.Logger) *HTTPHandl
 
 // Healthz handles health check requests
 func (h *HTTPHandler) Healthz(w http.ResponseWriter, r *http.Request) {
-	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), healthCheckTimeout)
 	defer cancel()
 
 	status, err := h.healthChecker.Check(ctx)
@@ -434,27 +445,29 @@ func (h *HTTPHandler) Healthz(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(statusCode)
-	json.NewEncoder(w).Encode(status)
+	if err := json.NewEncoder(w).Encode(status); err != nil {
+		// Log error but don't fail - response already started
+		h.logger.Error("Failed to encode health status", zap.Error(err))
+	}
 }
 
 // Readyz handles readiness check requests
 func (h *HTTPHandler) Readyz(w http.ResponseWriter, r *http.Request) {
-	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), healthCheckTimeout)
 	defer cancel()
 
 	// For readiness checks, we focus on critical dependencies only
-	readinessChecker := NewHealthChecker(h.logger)
-
-	// Add critical checks
+	var criticalCheckers []Checker
 	if h.healthChecker.checkers != nil {
 		for _, checker := range h.healthChecker.checkers {
 			// Only include critical checks for readiness
 			switch checker.Name() {
 			case "config", "harbor", "notifiers":
-				readinessChecker.checkers = append(readinessChecker.checkers, checker)
+				criticalCheckers = append(criticalCheckers, checker)
 			}
 		}
 	}
+	readinessChecker := NewHealthChecker(h.logger, criticalCheckers...)
 
 	status, err := readinessChecker.Check(ctx)
 	if err != nil {
@@ -477,5 +490,8 @@ func (h *HTTPHandler) Readyz(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(statusCode)
-	json.NewEncoder(w).Encode(status)
+	if err := json.NewEncoder(w).Encode(status); err != nil {
+		// Log error but don't fail - response already started
+		h.logger.Error("Failed to encode health status", zap.Error(err))
+	}
 }

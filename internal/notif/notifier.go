@@ -3,9 +3,17 @@ package notif
 import (
 	"context"
 	"fmt"
-	"math/rand"
 	"sync"
 	"time"
+)
+
+const (
+	defaultCircuitBreakerFailureThreshold = 5
+	defaultCircuitBreakerResetTimeout     = 30 * time.Second
+	defaultRetryMaxAttempts               = 3
+	defaultRetryMaxBackoff                = 5 * time.Minute
+	defaultRetryJitter                    = 0.2
+	defaultTokenBucketWaitInterval        = 100 * time.Millisecond
 )
 
 // Message represents a notification message
@@ -21,7 +29,7 @@ type Message struct {
 
 // Notifier defines the interface for all notification targets
 type Notifier interface {
-	Send(ctx context.Context, msg Message) error
+	Send(ctx context.Context, msg *Message) error
 	Name() string
 	// Metrics methods
 	GetMetrics() *NotifierMetrics
@@ -63,14 +71,17 @@ func NewFanout(targets []Notifier, limiter RateLimiter, logger interface{}) *Fan
 
 	// Create circuit breakers for each target
 	for _, target := range targets {
-		f.circuitBreakers[target.Name()] = NewCircuitBreaker(5, 30*time.Second, logger)
+		f.circuitBreakers[target.Name()] = NewCircuitBreaker(
+			defaultCircuitBreakerFailureThreshold,
+			defaultCircuitBreakerResetTimeout,
+			logger)
 	}
 
 	return f
 }
 
 // Send sends a message to all configured notifiers with enhanced error handling
-func (f *Fanout) Send(ctx context.Context, msg Message) error {
+func (f *Fanout) Send(ctx context.Context, msg *Message) error {
 	// Apply rate limiting if configured
 	if f.limiter != nil {
 		if err := f.limiter.Wait(ctx); err != nil {
@@ -99,12 +110,12 @@ func (f *Fanout) Send(ctx context.Context, msg Message) error {
 			return target.Send(ctx, msg)
 		}
 
-		context := map[string]interface{}{
+		ctxData := map[string]interface{}{
 			"notifier": targetName,
 			"message":  msg.Title,
 		}
 
-		err := breaker.Execute(operation, context)
+		err := breaker.Execute(operation, ctxData)
 		if err != nil {
 			errors = append(errors, fmt.Errorf("%s: %w", targetName, err))
 		} else {
@@ -113,9 +124,7 @@ func (f *Fanout) Send(ctx context.Context, msg Message) error {
 	}
 
 	// Log results
-	if len(successes) > 0 {
-		// TODO: Log successful deliveries
-	}
+	_ = successes // TODO: Log successful deliveries
 
 	if len(errors) > 0 {
 		// TODO: Log failures
@@ -131,7 +140,10 @@ func (f *Fanout) AddTarget(target Notifier) {
 	defer f.mu.Unlock()
 
 	f.targets = append(f.targets, target)
-	f.circuitBreakers[target.Name()] = NewCircuitBreaker(5, 30*time.Second, f.logger)
+	f.circuitBreakers[target.Name()] = NewCircuitBreaker(
+		defaultCircuitBreakerFailureThreshold,
+		defaultCircuitBreakerResetTimeout,
+		f.logger)
 }
 
 // GetTargets returns all configured targets
@@ -171,7 +183,7 @@ type Noop struct {
 }
 
 // Send implements the Notifier interface (does nothing)
-func (n *Noop) Send(ctx context.Context, msg Message) error {
+func (n *Noop) Send(_ context.Context, _ *Message) error {
 	return nil
 }
 
@@ -196,10 +208,10 @@ type RetryConfig struct {
 // DefaultRetryConfig returns default retry configuration
 func DefaultRetryConfig() RetryConfig {
 	return RetryConfig{
-		MaxAttempts:    3,
+		MaxAttempts:    defaultRetryMaxAttempts,
 		InitialBackoff: 1 * time.Second,
-		MaxBackoff:     5 * time.Minute,
-		Jitter:         0.2,
+		MaxBackoff:     defaultRetryMaxBackoff,
+		Jitter:         defaultRetryJitter,
 	}
 }
 
@@ -225,7 +237,7 @@ func NewCircuitBreaker(failureThreshold int, resetTimeout time.Duration, logger 
 }
 
 // Execute executes a function with circuit breaker protection
-func (cb *CircuitBreaker) Execute(operation func() error, context map[string]interface{}) error {
+func (cb *CircuitBreaker) Execute(operation func() error, _ map[string]interface{}) error {
 	cb.mu.RLock()
 	state := cb.state
 	cb.mu.RUnlock()
@@ -294,7 +306,12 @@ type RetryNotifier struct {
 }
 
 // NewRetryNotifier creates a new retry notifier with circuit breaker
-func NewRetryNotifier(target Notifier, config RetryConfig, circuitBreaker *CircuitBreaker, logger interface{}) *RetryNotifier {
+func NewRetryNotifier(
+	target Notifier,
+	config RetryConfig,
+	circuitBreaker *CircuitBreaker,
+	logger interface{},
+) *RetryNotifier {
 	return &RetryNotifier{
 		target:         target,
 		config:         config,
@@ -304,17 +321,17 @@ func NewRetryNotifier(target Notifier, config RetryConfig, circuitBreaker *Circu
 }
 
 // Send implements the Notifier interface with retry logic and circuit breaker
-func (r *RetryNotifier) Send(ctx context.Context, msg Message) error {
+func (r *RetryNotifier) Send(ctx context.Context, msg *Message) error {
 	operation := func() error {
 		return r.target.Send(ctx, msg)
 	}
 
-	context := map[string]interface{}{
+	ctxData := map[string]interface{}{
 		"notifier": r.target.Name(),
 		"message":  msg.Title,
 	}
 
-	err := r.circuitBreaker.Execute(operation, context)
+	err := r.circuitBreaker.Execute(operation, ctxData)
 	if err != nil {
 		return fmt.Errorf("circuit breaker or operation failed: %w", err)
 	}
@@ -327,26 +344,8 @@ func (r *RetryNotifier) Name() string {
 	return r.target.Name()
 }
 
-// calculateBackoff calculates exponential backoff with jitter
-func (r *RetryNotifier) calculateBackoff(attempt int) time.Duration {
-	// Calculate exponential backoff
-	backoff := r.config.InitialBackoff * time.Duration(1<<uint(attempt))
-	if backoff > r.config.MaxBackoff {
-		backoff = r.config.MaxBackoff
-	}
-
-	// Add jitter
-	if r.config.Jitter > 0 {
-		jitterFactor := rand.Float64()*r.config.Jitter - r.config.Jitter/2 // -jitter/2 to +jitter/2
-		jitter := time.Duration(jitterFactor * float64(backoff))
-		backoff += jitter
-	}
-
-	return backoff
-}
-
 // NewRateLimiter creates a new rate limiter
-func NewRateLimiter(rate int, burst int) RateLimiter {
+func NewRateLimiter(rate, burst int) RateLimiter {
 	return &tokenBucket{
 		rate:   rate,
 		burst:  burst,
@@ -393,7 +392,7 @@ func (tb *tokenBucket) Wait(ctx context.Context) error {
 		}
 
 		select {
-		case <-time.After(100 * time.Millisecond):
+		case <-time.After(defaultTokenBucketWaitInterval):
 		case <-ctx.Done():
 			return ctx.Err()
 		}
