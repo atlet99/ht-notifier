@@ -1,3 +1,4 @@
+// Package main provides a debug utility for testing configuration loading.
 package main
 
 import (
@@ -15,12 +16,15 @@ func main() {
 		log.Fatalf("Failed to load config: %v", err)
 	}
 
-	fmt.Printf("Slack enabled: %v\n", cfg.Notify.Slack.Enabled)
-	fmt.Printf("Slack rate_per_minute: %d\n", cfg.Notify.Slack.RatePerMinute)
-	fmt.Printf("Slack token: %s\n", cfg.Notify.Slack.Token)
-	fmt.Printf("Slack channel: %s\n", cfg.Notify.Slack.Channel)
-	fmt.Printf("Slack timeout: %v\n", cfg.Notify.Slack.Timeout)
-	fmt.Printf("Slack debug: %v\n", cfg.Notify.Slack.Debug)
+	// Use masked config to prevent logging sensitive data
+	maskedCfg := cfg.MaskSensitiveData()
+
+	fmt.Printf("Slack enabled: %v\n", maskedCfg.Notify.Slack.Enabled)
+	fmt.Printf("Slack rate_per_minute: %d\n", maskedCfg.Notify.Slack.RatePerMinute)
+	fmt.Printf("Slack token: %s\n", maskedCfg.Notify.Slack.Token) // Will show "****"
+	fmt.Printf("Slack channel: %s\n", maskedCfg.Notify.Slack.Channel)
+	fmt.Printf("Slack timeout: %v\n", maskedCfg.Notify.Slack.Timeout)
+	fmt.Printf("Slack debug: %v\n", maskedCfg.Notify.Slack.Debug)
 
 	// Show all environment variables that might affect Slack config
 	fmt.Println("\nEnvironment variables that might affect Slack:")

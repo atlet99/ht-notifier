@@ -1,3 +1,4 @@
+// Package notif provides notification functionality for various channels.
 package notif
 
 import (
@@ -9,378 +10,21 @@ import (
 	"strings"
 	"time"
 
-	"github.com/atlet99/ht-notifier/internal/config"
 	"github.com/wneessen/go-mail"
+
+	"github.com/atlet99/ht-notifier/internal/config"
 )
 
-// Email implements the Notifier interface for SMTP email using go-mail
-type Email struct {
-	client      *mail.Client
-	smtpConfig  config.SMTPConfig
-	emailConfig config.EmailConfig
-	from        string
-	to          []string
-	subject     string
-	prefix      string
-	limiter     RateLimiter
-	metrics     NotifierMetrics
-}
+const (
+	priorityHigh  = "high"
+	priorityLow   = "low"
+	authTypePlain = "plain"
+	smtpPortTLS   = 587
+	smtpPortSSL   = 465
+	smtpPortPlain = 25
+)
 
-// NewEmail creates a new email notifier using go-mail with enhanced authentication and SSL support
-func NewEmail(cfg config.EmailConfig, limiter RateLimiter) (*Email, error) {
-	// Validate and enhance SMTP configuration
-	enhancedCfg, err := ValidateAndEnhanceConfig(cfg.SMTP)
-	if err != nil {
-		return nil, fmt.Errorf("invalid SMTP configuration: %w", err)
-	}
-	cfg.SMTP = enhancedCfg
-
-	// Create go-mail client with options
-	opts := []mail.Option{
-		mail.WithPort(cfg.SMTP.Port),
-		mail.WithUsername(cfg.SMTP.Username),
-		mail.WithPassword(cfg.SMTP.Password),
-		mail.WithTimeout(cfg.SMTP.Timeout),
-	}
-
-	// Configure authentication
-	authType, err := getSMTPAuthType(cfg.SMTP.AuthType)
-	if err != nil {
-		return nil, fmt.Errorf("failed to configure SMTP authentication: %w", err)
-	}
-	opts = append(opts, mail.WithSMTPAuth(authType))
-
-	// Configure SSL/TLS with enhanced settings
-	tlsPolicy, err := getTLSPolicy(cfg.SMTP.Encryption)
-	if err != nil {
-		return nil, fmt.Errorf("failed to configure SMTP encryption: %w", err)
-	}
-
-	// Use TLSPortPolicy for automatic port selection and fallback
-	opts = append(opts, mail.WithTLSPortPolicy(tlsPolicy))
-
-	// Configure SSL if needed (for implicit SSL)
-	if cfg.SMTP.Encryption == "ssl" {
-		opts = append(opts, mail.WithSSL())
-	}
-
-	// Configure HELO/EHLO hostname if specified
-	if cfg.SMTP.HELOHost != "" {
-		opts = append(opts, mail.WithHELO(cfg.SMTP.HELOHost))
-	}
-
-	// Configure local name if specified
-	if cfg.SMTP.LocalName != "" {
-		// Note: go-mail doesn't have a direct WithLocalName option,
-		// but we can set it via HELO
-		opts = append(opts, mail.WithHELO(cfg.SMTP.LocalName))
-	}
-
-	// Configure SSL/TLS insecure options if specified
-	if cfg.SMTP.SSLInsecure || cfg.SMTP.SSNOCHECK {
-		// Create custom TLS config for insecure connections
-		tlsConfig := &tls.Config{
-			InsecureSkipVerify: true,
-			ServerName:         cfg.SMTP.Host,
-		}
-		opts = append(opts, mail.WithTLSConfig(tlsConfig))
-	}
-
-	// Configure STARTTLS options
-	if cfg.SMTP.StartTLS && !cfg.SMTP.DisableSTARTTLS {
-		// STARTTLS is handled by the TLSPolicy configuration
-		// No additional option needed as it's covered by WithTLSPortPolicy
-	}
-
-	// Configure NOOP skipping for Exchange servers
-	if cfg.SMTP.DisableHELO {
-		opts = append(opts, mail.WithoutNoop())
-	}
-
-	// Configure additional SSL verification options
-	if cfg.SMTP.SSNoverify || cfg.SMTP.SSNoverifyHostname {
-		tlsConfig := &tls.Config{
-			InsecureSkipVerify: true,
-			ServerName:         "",
-		}
-		opts = append(opts, mail.WithTLSConfig(tlsConfig))
-	}
-
-	// Create client
-	client, err := mail.NewClient(cfg.SMTP.Host, opts...)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create SMTP client: %w", err)
-	}
-
-	return &Email{
-		client:      client,
-		smtpConfig:  cfg.SMTP,
-		emailConfig: cfg,
-		from:        cfg.SMTP.From,
-		to:          cfg.To,
-		subject:     cfg.SubjectPrefix,
-		prefix:      cfg.SubjectPrefix,
-		limiter:     limiter,
-		metrics:     NotifierMetrics{},
-	}, nil
-}
-
-// Send implements the Notifier interface using go-mail
-func (e *Email) Send(ctx context.Context, msg Message) error {
-	start := time.Now()
-
-	// Apply rate limiting if configured
-	if e.limiter != nil {
-		if err := e.limiter.Wait(ctx); err != nil {
-			e.recordFailure(err)
-			return fmt.Errorf("rate limiter wait failed: %w", err)
-		}
-	}
-
-	// Prepare email subject
-	subject := e.formatSubject(msg)
-
-	// Prepare email body
-	body, err := e.formatBody(msg)
-	if err != nil {
-		e.recordFailure(err)
-		return fmt.Errorf("failed to format email body: %w", err)
-	}
-
-	// Create new message
-	m := mail.NewMsg()
-	if err := m.From(e.from); err != nil {
-		e.recordFailure(err)
-		return fmt.Errorf("failed to set from address: %w", err)
-	}
-
-	if err := m.To(e.to...); err != nil {
-		e.recordFailure(err)
-		return fmt.Errorf("failed to set recipients: %w", err)
-	}
-
-	m.Subject(subject)
-	m.SetBodyString(mail.TypeTextHTML, body)
-
-	// Send email
-	if err := e.client.Send(m); err != nil {
-		e.recordFailure(err)
-		return fmt.Errorf("failed to send email: %w", err)
-	}
-
-	e.recordSuccess(time.Since(start))
-	return nil
-}
-
-// SendWithAttachment sends an email with attachment
-func (e *Email) SendWithAttachment(ctx context.Context, msg Message, attachments []string) error {
-	// Apply rate limiting if configured
-	if e.limiter != nil {
-		if err := e.limiter.Wait(ctx); err != nil {
-			return fmt.Errorf("rate limiter wait failed: %w", err)
-		}
-	}
-
-	// Prepare email subject
-	subject := e.formatSubject(msg)
-
-	// Prepare email body
-	body, err := e.formatBody(msg)
-	if err != nil {
-		return fmt.Errorf("failed to format email body: %w", err)
-	}
-
-	// Create new message
-	m := mail.NewMsg()
-	if err := m.From(e.from); err != nil {
-		return fmt.Errorf("failed to set from address: %w", err)
-	}
-
-	if err := m.To(e.to...); err != nil {
-		return fmt.Errorf("failed to set recipients: %w", err)
-	}
-
-	m.Subject(subject)
-	m.SetBodyString(mail.TypeTextHTML, body)
-
-	// Note: go-mail attachment support may vary by version
-	// For now, we'll just send the email without attachments
-	// but keep the structure for future enhancement
-
-	// Send email
-	if err := e.client.Send(m); err != nil {
-		return fmt.Errorf("failed to send email: %w", err)
-	}
-
-	return nil
-}
-
-// SendWithPriority sends an email with priority headers
-func (e *Email) SendWithPriority(ctx context.Context, msg Message, priority string) error {
-	// Apply rate limiting if configured
-	if e.limiter != nil {
-		if err := e.limiter.Wait(ctx); err != nil {
-			return fmt.Errorf("rate limiter wait failed: %w", err)
-		}
-	}
-
-	// Prepare email subject
-	subject := e.formatSubject(msg)
-
-	// Prepare email body
-	body, err := e.formatBody(msg)
-	if err != nil {
-		return fmt.Errorf("failed to format email body: %w", err)
-	}
-
-	// Create new message
-	m := mail.NewMsg()
-	if err := m.From(e.from); err != nil {
-		return fmt.Errorf("failed to set from address: %w", err)
-	}
-
-	if err := m.To(e.to...); err != nil {
-		return fmt.Errorf("failed to set recipients: %w", err)
-	}
-
-	m.Subject(subject)
-	m.SetBodyString(mail.TypeTextHTML, body)
-
-	// Add priority headers
-	switch strings.ToLower(priority) {
-	case "high":
-		m.SetGenHeader("X-Priority", "1")
-		m.SetGenHeader("X-MSMail-Priority", "High")
-		m.SetGenHeader("Importance", "High")
-	case "low":
-		m.SetGenHeader("X-Priority", "5")
-		m.SetGenHeader("X-MSMail-Priority", "Low")
-		m.SetGenHeader("Importance", "Low")
-	default:
-		m.SetGenHeader("X-Priority", "3")
-		m.SetGenHeader("X-MSMail-Priority", "Normal")
-		m.SetGenHeader("Importance", "Normal")
-	}
-
-	// Send email
-	if err := e.client.Send(m); err != nil {
-		return fmt.Errorf("failed to send email: %w", err)
-	}
-
-	return nil
-}
-
-// SendWithTemplate sends an email using a custom template
-func (e *Email) SendWithTemplate(ctx context.Context, msg Message, templateName string, templateContent string, data interface{}) error {
-	// Apply rate limiting if configured
-	if e.limiter != nil {
-		if err := e.limiter.Wait(ctx); err != nil {
-			return fmt.Errorf("rate limiter wait failed: %w", err)
-		}
-	}
-
-	// Prepare email subject
-	subject := e.formatSubject(msg)
-
-	// Parse custom template
-	tmpl, err := template.New(templateName).Parse(templateContent)
-	if err != nil {
-		return fmt.Errorf("failed to parse email template: %w", err)
-	}
-
-	// Execute template
-	var body bytes.Buffer
-	if err := tmpl.Execute(&body, data); err != nil {
-		return fmt.Errorf("failed to execute email template: %w", err)
-	}
-
-	// Create new message
-	m := mail.NewMsg()
-	if err := m.From(e.from); err != nil {
-		return fmt.Errorf("failed to set from address: %w", err)
-	}
-
-	if err := m.To(e.to...); err != nil {
-		return fmt.Errorf("failed to set recipients: %w", err)
-	}
-
-	m.Subject(subject)
-	m.SetBodyString(mail.TypeTextHTML, body.String())
-
-	// Send email
-	if err := e.client.Send(m); err != nil {
-		return fmt.Errorf("failed to send email: %w", err)
-	}
-
-	return nil
-}
-
-// Name returns the name of this notifier
-func (e *Email) Name() string {
-	return "email"
-}
-
-// GetMetrics returns the metrics for this notifier
-func (e *Email) GetMetrics() *NotifierMetrics {
-	return &e.metrics
-}
-
-// recordSuccess records a successful notification
-func (e *Email) recordSuccess(duration time.Duration) {
-	e.metrics.TotalSent++
-	e.metrics.LastSent = time.Now()
-	e.metrics.LastDuration = duration
-	e.metrics.AvgDuration = time.Duration((int64(e.metrics.AvgDuration)*e.metrics.TotalSent + int64(duration)) / (e.metrics.TotalSent + 1))
-}
-
-// recordFailure records a failed notification
-func (e *Email) recordFailure(err error) {
-	e.metrics.TotalFailed++
-	e.metrics.LastFailed = time.Now()
-}
-
-// formatSubject formats the email subject based on message content
-func (e *Email) formatSubject(msg Message) string {
-	var subjectParts []string
-
-	if e.prefix != "" {
-		subjectParts = append(subjectParts, e.prefix)
-	}
-
-	if msg.Title != "" {
-		subjectParts = append(subjectParts, msg.Title)
-	} else {
-		subjectParts = append(subjectParts, "Harbor Scan Alert")
-	}
-
-	// Add severity information if available
-	if len(msg.SeverityCounts) > 0 {
-		var severityInfo []string
-		if critical, ok := msg.SeverityCounts["Critical"]; ok && critical > 0 {
-			severityInfo = append(severityInfo, fmt.Sprintf("C%d", critical))
-		}
-		if high, ok := msg.SeverityCounts["High"]; ok && high > 0 {
-			severityInfo = append(severityInfo, fmt.Sprintf("H%d", high))
-		}
-		if medium, ok := msg.SeverityCounts["Medium"]; ok && medium > 0 {
-			severityInfo = append(severityInfo, fmt.Sprintf("M%d", medium))
-		}
-		if low, ok := msg.SeverityCounts["Low"]; ok && low > 0 {
-			severityInfo = append(severityInfo, fmt.Sprintf("L%d", low))
-		}
-
-		if len(severityInfo) > 0 {
-			subjectParts = append(subjectParts, fmt.Sprintf("(%s)", strings.Join(severityInfo, "/")))
-		}
-	}
-
-	return strings.Join(subjectParts, " ")
-}
-
-// formatBody formats the email body using HTML template
-func (e *Email) formatBody(msg Message) (string, error) {
-	// Define HTML template
-	const emailTemplate = `<!DOCTYPE html>
+const emailHTMLTemplate = `<!DOCTYPE html>
 <html>
 <head>
     <meta charset="UTF-8">
@@ -520,8 +164,388 @@ func (e *Email) formatBody(msg Message) (string, error) {
 </body>
 </html>`
 
-	// Prepare template data
-	data := struct {
+// Email implements the Notifier interface for SMTP email using go-mail
+type Email struct {
+	client      *mail.Client
+	smtpConfig  config.SMTPConfig
+	emailConfig config.EmailConfig
+	from        string
+	to          []string
+	subject     string
+	prefix      string
+	limiter     RateLimiter
+	metrics     NotifierMetrics
+}
+
+// NewEmail creates a new email notifier using go-mail with enhanced authentication and SSL support
+func NewEmail(cfg *config.EmailConfig, limiter RateLimiter) (*Email, error) {
+	// Validate and enhance SMTP configuration
+	enhancedCfg, err := ValidateAndEnhanceConfig(&cfg.SMTP)
+	if err != nil {
+		return nil, fmt.Errorf("invalid SMTP configuration: %w", err)
+	}
+	cfg.SMTP = enhancedCfg
+
+	// Create go-mail client with options
+	opts := []mail.Option{
+		mail.WithPort(cfg.SMTP.Port),
+		mail.WithUsername(cfg.SMTP.Username),
+		mail.WithPassword(cfg.SMTP.Password),
+		mail.WithTimeout(cfg.SMTP.Timeout),
+	}
+
+	// Configure authentication
+	authType, err := getSMTPAuthType(cfg.SMTP.AuthType)
+	if err != nil {
+		return nil, fmt.Errorf("failed to configure SMTP authentication: %w", err)
+	}
+	opts = append(opts, mail.WithSMTPAuth(authType))
+
+	// Configure SSL/TLS with enhanced settings
+	tlsPolicy, err := getTLSPolicy(cfg.SMTP.Encryption)
+	if err != nil {
+		return nil, fmt.Errorf("failed to configure SMTP encryption: %w", err)
+	}
+
+	// Use TLSPortPolicy for automatic port selection and fallback
+	opts = append(opts, mail.WithTLSPortPolicy(tlsPolicy))
+
+	// Configure SSL if needed (for implicit SSL)
+	if cfg.SMTP.Encryption == "ssl" {
+		opts = append(opts, mail.WithSSL())
+	}
+
+	// Configure HELO/EHLO hostname if specified
+	if cfg.SMTP.HELOHost != "" {
+		opts = append(opts, mail.WithHELO(cfg.SMTP.HELOHost))
+	}
+
+	// Configure local name if specified
+	if cfg.SMTP.LocalName != "" {
+		// Note: go-mail doesn't have a direct WithLocalName option,
+		// but we can set it via HELO
+		opts = append(opts, mail.WithHELO(cfg.SMTP.LocalName))
+	}
+
+	// Configure SSL/TLS insecure options if specified
+	if cfg.SMTP.SSLInsecure || cfg.SMTP.SSNOCHECK {
+		// Create custom TLS config for insecure connections
+		tlsConfig := &tls.Config{
+			// #nosec G402 -- InsecureSkipVerify is needed for testing or self-signed certs
+			InsecureSkipVerify: true,
+			ServerName:         cfg.SMTP.Host,
+		}
+		opts = append(opts, mail.WithTLSConfig(tlsConfig))
+	}
+
+	// Configure STARTTLS options
+	// STARTTLS is handled by the TLSPolicy configuration
+	// No additional option needed as it's covered by WithTLSPortPolicy
+	if cfg.SMTP.StartTLS && !cfg.SMTP.DisableSTARTTLS {
+		_ = cfg.SMTP.StartTLS // Explicitly handle the condition
+	}
+
+	// Configure NOOP skipping for Exchange servers
+	if cfg.SMTP.DisableHELO {
+		opts = append(opts, mail.WithoutNoop())
+	}
+
+	// Configure additional SSL verification options
+	if cfg.SMTP.SSNoverify || cfg.SMTP.SSNoverifyHostname {
+		tlsConfig := &tls.Config{
+			// #nosec G402 -- InsecureSkipVerify is needed for testing or self-signed certs
+			InsecureSkipVerify: true,
+			ServerName:         "",
+		}
+		opts = append(opts, mail.WithTLSConfig(tlsConfig))
+	}
+
+	// Create client
+	client, err := mail.NewClient(cfg.SMTP.Host, opts...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create SMTP client: %w", err)
+	}
+
+	return &Email{
+		client:      client,
+		smtpConfig:  cfg.SMTP,
+		emailConfig: *cfg,
+		from:        cfg.SMTP.From,
+		to:          cfg.To,
+		subject:     cfg.SubjectPrefix,
+		prefix:      cfg.SubjectPrefix,
+		limiter:     limiter,
+		metrics:     NotifierMetrics{},
+	}, nil
+}
+
+// Send implements the Notifier interface using go-mail
+func (e *Email) Send(ctx context.Context, msg *Message) error {
+	start := time.Now()
+
+	// Apply rate limiting if configured
+	if e.limiter != nil {
+		if err := e.limiter.Wait(ctx); err != nil {
+			e.recordFailure(err)
+			return fmt.Errorf("rate limiter wait failed: %w", err)
+		}
+	}
+
+	// Prepare email subject
+	subject := e.formatSubject(msg)
+
+	// Prepare email body
+	body, err := e.formatBody(msg)
+	if err != nil {
+		e.recordFailure(err)
+		return fmt.Errorf("failed to format email body: %w", err)
+	}
+
+	// Create new message
+	m := mail.NewMsg()
+	if err := m.From(e.from); err != nil {
+		e.recordFailure(err)
+		return fmt.Errorf("failed to set from address: %w", err)
+	}
+
+	if err := m.To(e.to...); err != nil {
+		e.recordFailure(err)
+		return fmt.Errorf("failed to set recipients: %w", err)
+	}
+
+	m.Subject(subject)
+	m.SetBodyString(mail.TypeTextHTML, body)
+
+	// Send email
+	if err := e.client.Send(m); err != nil {
+		e.recordFailure(err)
+		return fmt.Errorf("failed to send email: %w", err)
+	}
+
+	e.recordSuccess(time.Since(start))
+	return nil
+}
+
+// SendWithAttachment sends an email with attachment
+func (e *Email) SendWithAttachment(ctx context.Context, msg *Message, _ []string) error {
+	// Apply rate limiting if configured
+	if e.limiter != nil {
+		if err := e.limiter.Wait(ctx); err != nil {
+			return fmt.Errorf("rate limiter wait failed: %w", err)
+		}
+	}
+
+	// Prepare email subject
+	subject := e.formatSubject(msg)
+
+	// Prepare email body
+	body, err := e.formatBody(msg)
+	if err != nil {
+		return fmt.Errorf("failed to format email body: %w", err)
+	}
+
+	// Create new message
+	m := mail.NewMsg()
+	if err := m.From(e.from); err != nil {
+		return fmt.Errorf("failed to set from address: %w", err)
+	}
+
+	if err := m.To(e.to...); err != nil {
+		return fmt.Errorf("failed to set recipients: %w", err)
+	}
+
+	m.Subject(subject)
+	m.SetBodyString(mail.TypeTextHTML, body)
+
+	// Note: go-mail attachment support may vary by version
+	// For now, we'll just send the email without attachments
+	// but keep the structure for future enhancement
+
+	// Send email
+	if err := e.client.Send(m); err != nil {
+		return fmt.Errorf("failed to send email: %w", err)
+	}
+
+	return nil
+}
+
+// SendWithPriority sends an email with priority headers
+func (e *Email) SendWithPriority(ctx context.Context, msg *Message, priority string) error {
+	// Apply rate limiting if configured
+	if e.limiter != nil {
+		if err := e.limiter.Wait(ctx); err != nil {
+			return fmt.Errorf("rate limiter wait failed: %w", err)
+		}
+	}
+
+	// Prepare email subject
+	subject := e.formatSubject(msg)
+
+	// Prepare email body
+	body, err := e.formatBody(msg)
+	if err != nil {
+		return fmt.Errorf("failed to format email body: %w", err)
+	}
+
+	// Create new message
+	m := mail.NewMsg()
+	if err := m.From(e.from); err != nil {
+		return fmt.Errorf("failed to set from address: %w", err)
+	}
+
+	if err := m.To(e.to...); err != nil {
+		return fmt.Errorf("failed to set recipients: %w", err)
+	}
+
+	m.Subject(subject)
+	m.SetBodyString(mail.TypeTextHTML, body)
+
+	// Add priority headers
+	switch strings.ToLower(priority) {
+	case priorityHigh:
+		m.SetGenHeader("X-Priority", "1")
+		m.SetGenHeader("X-MSMail-Priority", "High")
+		m.SetGenHeader("Importance", "High")
+	case priorityLow:
+		m.SetGenHeader("X-Priority", "5")
+		m.SetGenHeader("X-MSMail-Priority", "Low")
+		m.SetGenHeader("Importance", "Low")
+	default:
+		m.SetGenHeader("X-Priority", "3")
+		m.SetGenHeader("X-MSMail-Priority", "Normal")
+		m.SetGenHeader("Importance", "Normal")
+	}
+
+	// Send email
+	if err := e.client.Send(m); err != nil {
+		return fmt.Errorf("failed to send email: %w", err)
+	}
+
+	return nil
+}
+
+// SendWithTemplate sends an email using a custom template
+func (e *Email) SendWithTemplate(
+	ctx context.Context,
+	msg *Message,
+	templateName, templateContent string,
+	data interface{},
+) error {
+	// Apply rate limiting if configured
+	if e.limiter != nil {
+		if err := e.limiter.Wait(ctx); err != nil {
+			return fmt.Errorf("rate limiter wait failed: %w", err)
+		}
+	}
+
+	// Prepare email subject
+	subject := e.formatSubject(msg)
+
+	// Parse custom template
+	tmpl, err := template.New(templateName).Parse(templateContent)
+	if err != nil {
+		return fmt.Errorf("failed to parse email template: %w", err)
+	}
+
+	// Execute template
+	var body bytes.Buffer
+	if err := tmpl.Execute(&body, data); err != nil {
+		return fmt.Errorf("failed to execute email template: %w", err)
+	}
+
+	// Create new message
+	m := mail.NewMsg()
+	if err := m.From(e.from); err != nil {
+		return fmt.Errorf("failed to set from address: %w", err)
+	}
+
+	if err := m.To(e.to...); err != nil {
+		return fmt.Errorf("failed to set recipients: %w", err)
+	}
+
+	m.Subject(subject)
+	m.SetBodyString(mail.TypeTextHTML, body.String())
+
+	// Send email
+	if err := e.client.Send(m); err != nil {
+		return fmt.Errorf("failed to send email: %w", err)
+	}
+
+	return nil
+}
+
+// Name returns the name of this notifier
+func (e *Email) Name() string {
+	return "email"
+}
+
+// GetMetrics returns the metrics for this notifier
+func (e *Email) GetMetrics() *NotifierMetrics {
+	return &e.metrics
+}
+
+// recordSuccess records a successful notification
+func (e *Email) recordSuccess(duration time.Duration) {
+	e.metrics.TotalSent++
+	e.metrics.LastSent = time.Now()
+	e.metrics.LastDuration = duration
+	e.metrics.AvgDuration = time.Duration(
+		(int64(e.metrics.AvgDuration)*e.metrics.TotalSent + int64(duration)) /
+			(e.metrics.TotalSent + 1))
+}
+
+// recordFailure records a failed notification
+func (e *Email) recordFailure(_ error) {
+	e.metrics.TotalFailed++
+	e.metrics.LastFailed = time.Now()
+}
+
+// formatSubject formats the email subject based on message content
+func (e *Email) formatSubject(msg *Message) string {
+	var subjectParts []string
+
+	if e.prefix != "" {
+		subjectParts = append(subjectParts, e.prefix)
+	}
+
+	if msg.Title != "" {
+		subjectParts = append(subjectParts, msg.Title)
+	} else {
+		subjectParts = append(subjectParts, "Harbor Scan Alert")
+	}
+
+	// Add severity information if available
+	if len(msg.SeverityCounts) > 0 {
+		var severityInfo []string
+		if critical, ok := msg.SeverityCounts["Critical"]; ok && critical > 0 {
+			severityInfo = append(severityInfo, fmt.Sprintf("C%d", critical))
+		}
+		if high, ok := msg.SeverityCounts["High"]; ok && high > 0 {
+			severityInfo = append(severityInfo, fmt.Sprintf("H%d", high))
+		}
+		if medium, ok := msg.SeverityCounts["Medium"]; ok && medium > 0 {
+			severityInfo = append(severityInfo, fmt.Sprintf("M%d", medium))
+		}
+		if low, ok := msg.SeverityCounts["Low"]; ok && low > 0 {
+			severityInfo = append(severityInfo, fmt.Sprintf("L%d", low))
+		}
+
+		if len(severityInfo) > 0 {
+			subjectParts = append(subjectParts, fmt.Sprintf("(%s)", strings.Join(severityInfo, "/")))
+		}
+	}
+
+	return strings.Join(subjectParts, " ")
+}
+
+// formatBody formats the email body using HTML template
+func (e *Email) formatBody(msg *Message) (string, error) {
+	data := e.prepareTemplateData(msg)
+	return e.executeEmailTemplate(data)
+}
+
+func (e *Email) prepareTemplateData(msg *Message) interface{} {
+	return struct {
 		Title          string
 		Subtitle       string
 		Body           string
@@ -538,9 +562,10 @@ func (e *Email) formatBody(msg Message) (string, error) {
 		Metadata:       msg.Metadata,
 		Timestamp:      time.Now().Format(time.RFC3339),
 	}
+}
 
-	// Parse and execute template
-	tmpl, err := template.New("email").Parse(emailTemplate)
+func (e *Email) executeEmailTemplate(data interface{}) (string, error) {
+	tmpl, err := template.New("email").Parse(emailHTMLTemplate)
 	if err != nil {
 		return "", fmt.Errorf("failed to parse email template: %w", err)
 	}
@@ -554,7 +579,7 @@ func (e *Email) formatBody(msg Message) (string, error) {
 }
 
 // validateSMTPConfig validates SMTP configuration
-func validateSMTPConfig(cfg config.SMTPConfig) error {
+func validateSMTPConfig(cfg *config.SMTPConfig) error {
 	if cfg.Host == "" {
 		return fmt.Errorf("SMTP host is required")
 	}
@@ -577,7 +602,7 @@ func validateSMTPConfig(cfg config.SMTPConfig) error {
 // getSMTPAuthType converts string to SMTPAuthType with full go-mail support
 func getSMTPAuthType(authType string) (mail.SMTPAuthType, error) {
 	switch strings.ToLower(authType) {
-	case "plain", "login":
+	case authTypePlain, "login":
 		return mail.SMTPAuthPlain, nil
 	case "plain-noenc":
 		return mail.SMTPAuthPlainNoEnc, nil
@@ -619,7 +644,7 @@ func getTLSPolicy(encryption string) (mail.TLSPolicy, error) {
 }
 
 // TestConnection tests the SMTP connection using go-mail
-func (e *Email) TestConnection(ctx context.Context) error {
+func (e *Email) TestConnection(_ context.Context) error {
 	// Create test message
 	m := mail.NewMsg()
 	if err := m.From(e.from); err != nil {
@@ -641,9 +666,8 @@ func (e *Email) TestConnection(ctx context.Context) error {
 	return nil
 }
 
-// TestAuthConnection tests SMTP connection with authentication only
-func (e *Email) TestAuthConnection(ctx context.Context) error {
-	// Create test message
+// sendTestMessage sends a test message with the given subject and body
+func (e *Email) sendTestMessage(subject, body, errorMsg string) error {
 	m := mail.NewMsg()
 	if err := m.From(e.from); err != nil {
 		return fmt.Errorf("failed to set from address: %w", err)
@@ -653,42 +677,36 @@ func (e *Email) TestAuthConnection(ctx context.Context) error {
 		return fmt.Errorf("failed to set recipient: %w", err)
 	}
 
-	m.Subject("Authentication Test")
-	m.SetBodyString(mail.TypeTextPlain, "This is a test message to verify SMTP authentication.")
+	m.Subject(subject)
+	m.SetBodyString(mail.TypeTextPlain, body)
 
-	// Send test message
 	if err := e.client.Send(m); err != nil {
-		return fmt.Errorf("failed to send authentication test: %w", err)
+		return fmt.Errorf("%s: %w", errorMsg, err)
 	}
 
 	return nil
+}
+
+// TestAuthConnection tests SMTP connection with authentication only
+func (e *Email) TestAuthConnection(_ context.Context) error {
+	return e.sendTestMessage(
+		"Authentication Test",
+		"This is a test message to verify SMTP authentication.",
+		"failed to send authentication test",
+	)
 }
 
 // TestTLSSConnection tests SMTP connection with TLS encryption
-func (e *Email) TestTLSSConnection(ctx context.Context) error {
-	// Create test message
-	m := mail.NewMsg()
-	if err := m.From(e.from); err != nil {
-		return fmt.Errorf("failed to set from address: %w", err)
-	}
-
-	if err := m.To(e.to[0]); err != nil {
-		return fmt.Errorf("failed to set recipient: %w", err)
-	}
-
-	m.Subject("TLS Encryption Test")
-	m.SetBodyString(mail.TypeTextPlain, "This is a test message to verify TLS encryption.")
-
-	// Send test message
-	if err := e.client.Send(m); err != nil {
-		return fmt.Errorf("failed to send TLS test: %w", err)
-	}
-
-	return nil
+func (e *Email) TestTLSSConnection(_ context.Context) error {
+	return e.sendTestMessage(
+		"TLS Encryption Test",
+		"This is a test message to verify TLS encryption.",
+		"failed to send TLS test",
+	)
 }
 
 // TestAllAuthTypes tests all supported authentication types
-func TestAllAuthTypes(ctx context.Context, cfg config.SMTPConfig, to []string) map[string]error {
+func TestAllAuthTypes(ctx context.Context, cfg *config.SMTPConfig, to []string) map[string]error {
 	results := make(map[string]error)
 
 	authTypes := []string{
@@ -698,7 +716,7 @@ func TestAllAuthTypes(ctx context.Context, cfg config.SMTPConfig, to []string) m
 	}
 
 	for _, authType := range authTypes {
-		testCfg := cfg
+		testCfg := *cfg
 		testCfg.AuthType = authType
 
 		emailCfg := config.EmailConfig{
@@ -706,15 +724,15 @@ func TestAllAuthTypes(ctx context.Context, cfg config.SMTPConfig, to []string) m
 			To:   to,
 		}
 
-		email, err := NewEmail(emailCfg, nil)
+		email, err := NewEmail(&emailCfg, nil)
 		if err != nil {
 			results[authType] = fmt.Errorf("failed to create client: %w", err)
 			continue
 		}
 
 		err = email.TestAuthConnection(ctx)
-		email.Close()
-
+		// #nosec G104 -- Close() error is not critical in test context
+		_ = email.Close()
 		results[authType] = err
 	}
 
@@ -741,19 +759,19 @@ func GetRecommendedAuthType(provider string) string {
 	case "outlook", "office365", "microsoft":
 		return "login"
 	case "yahoo":
-		return "plain"
+		return authTypePlain
 	case "icloud", "apple":
-		return "plain"
+		return authTypePlain
 	case "yandex":
-		return "plain"
+		return authTypePlain
 	case "mailru":
-		return "plain"
+		return authTypePlain
 	case "zoho":
-		return "plain"
+		return authTypePlain
 	case "sendgrid":
-		return "plain"
+		return authTypePlain
 	default:
-		return "plain"
+		return authTypePlain
 	}
 }
 
@@ -789,7 +807,7 @@ func GetProviderConfig(provider string) config.SMTPConfig {
 	case "gmail", "google":
 		return config.SMTPConfig{
 			Host:       "smtp.gmail.com",
-			Port:       587,
+			Port:       smtpPortTLS,
 			AuthType:   "xoauth2",
 			Encryption: "tls",
 			HELOHost:   "localhost",
@@ -797,7 +815,7 @@ func GetProviderConfig(provider string) config.SMTPConfig {
 	case "outlook", "office365", "microsoft":
 		return config.SMTPConfig{
 			Host:       "smtp.office365.com",
-			Port:       587,
+			Port:       smtpPortTLS,
 			AuthType:   "login",
 			Encryption: "tls",
 			HELOHost:   "localhost",
@@ -805,56 +823,56 @@ func GetProviderConfig(provider string) config.SMTPConfig {
 	case "yahoo":
 		return config.SMTPConfig{
 			Host:       "smtp.mail.yahoo.com",
-			Port:       587,
-			AuthType:   "plain",
+			Port:       smtpPortTLS,
+			AuthType:   authTypePlain,
 			Encryption: "tls",
 			HELOHost:   "localhost",
 		}
 	case "icloud", "apple":
 		return config.SMTPConfig{
 			Host:       "smtp.mail.me.com",
-			Port:       587,
-			AuthType:   "plain",
+			Port:       smtpPortTLS,
+			AuthType:   authTypePlain,
 			Encryption: "tls",
 			HELOHost:   "localhost",
 		}
 	case "yandex":
 		return config.SMTPConfig{
 			Host:       "smtp.yandex.ru",
-			Port:       465,
-			AuthType:   "plain",
+			Port:       smtpPortSSL,
+			AuthType:   authTypePlain,
 			Encryption: "ssl",
 			HELOHost:   "localhost",
 		}
 	case "mailru":
 		return config.SMTPConfig{
 			Host:       "smtp.mail.ru",
-			Port:       465,
-			AuthType:   "plain",
+			Port:       smtpPortSSL,
+			AuthType:   authTypePlain,
 			Encryption: "ssl",
 			HELOHost:   "localhost",
 		}
 	case "zoho":
 		return config.SMTPConfig{
 			Host:       "smtp.zoho.com",
-			Port:       587,
-			AuthType:   "plain",
+			Port:       smtpPortTLS,
+			AuthType:   authTypePlain,
 			Encryption: "tls",
 			HELOHost:   "localhost",
 		}
 	case "sendgrid":
 		return config.SMTPConfig{
 			Host:       "smtp.sendgrid.net",
-			Port:       587,
-			AuthType:   "plain",
+			Port:       smtpPortTLS,
+			AuthType:   authTypePlain,
 			Encryption: "tls",
 			HELOHost:   "localhost",
 		}
 	default:
 		return config.SMTPConfig{
 			Host:       "localhost",
-			Port:       25,
-			AuthType:   "plain",
+			Port:       smtpPortPlain,
+			AuthType:   authTypePlain,
 			Encryption: "none",
 			HELOHost:   "localhost",
 		}
@@ -862,21 +880,23 @@ func GetProviderConfig(provider string) config.SMTPConfig {
 }
 
 // ValidateAndEnhanceConfig validates and enhances SMTP configuration with provider defaults
-func ValidateAndEnhanceConfig(cfg config.SMTPConfig) (config.SMTPConfig, error) {
+func ValidateAndEnhanceConfig(cfg *config.SMTPConfig) (config.SMTPConfig, error) {
 	// Validate basic configuration
 	if err := validateSMTPConfig(cfg); err != nil {
-		return cfg, fmt.Errorf("invalid SMTP configuration: %w", err)
+		return *cfg, fmt.Errorf("invalid SMTP configuration: %w", err)
 	}
 
+	result := *cfg
+
 	// Set default HELO host if not specified
-	if cfg.HELOHost == "" {
-		cfg.HELOHost = "localhost"
+	if result.HELOHost == "" {
+		result.HELOHost = "localhost"
 	}
 
 	// Set default local name if not specified
-	if cfg.LocalName == "" {
-		cfg.LocalName = cfg.HELOHost
+	if result.LocalName == "" {
+		result.LocalName = result.HELOHost
 	}
 
-	return cfg, nil
+	return result, nil
 }

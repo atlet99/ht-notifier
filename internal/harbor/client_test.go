@@ -50,7 +50,7 @@ func TestNewClient_InvalidURL(t *testing.T) {
 
 func TestNewClient_CustomHTTPClient(t *testing.T) {
 	cfg := config.HarborConfig{
-		BaseURL: "https://harbor.example.com",
+		BaseURL:  "https://harbor.example.com",
 		Username: "testuser",
 		Password: "testpass",
 	}
@@ -78,7 +78,7 @@ func TestClient_GetProject(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "/api/v2.0/projects/123", r.URL.Path)
 		assert.Equal(t, "GET", r.Method)
-		
+
 		// Set basic auth
 		username, password, ok := r.BasicAuth()
 		assert.True(t, ok)
@@ -203,7 +203,7 @@ func TestClient_GetArtifactOverview(t *testing.T) {
 func TestClient_UIArtifactURL(t *testing.T) {
 	// Configure client
 	cfg := config.HarborConfig{
-		BaseURL: "https://harbor.example.com",
+		BaseURL:  "https://harbor.example.com",
 		Username: "testuser",
 		Password: "testpass",
 	}

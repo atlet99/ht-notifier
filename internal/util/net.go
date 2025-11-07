@@ -1,8 +1,15 @@
+// Package util provides utility functions for network operations.
 package util
 
 import (
 	"net"
 	"strings"
+)
+
+const (
+	maxIPExpansionLimit = 1000
+	ipv6AddressLength   = 16
+	ipRangePartsCount   = 2
 )
 
 // IsCIDR checks if a string is a valid CIDR notation
@@ -18,17 +25,18 @@ func IsIP(ip string) bool {
 
 // ParseIPRange parses an IP range in format "IP-IP" or "IP/CIDR"
 func ParseIPRange(rangeStr string) ([]string, error) {
-	if strings.Contains(rangeStr, "/") {
+	switch {
+	case strings.Contains(rangeStr, "/"):
 		// CIDR notation
 		_, ipNet, err := net.ParseCIDR(rangeStr)
 		if err != nil {
 			return nil, err
 		}
 		return expandIPNet(ipNet), nil
-	} else if strings.Contains(rangeStr, "-") {
+	case strings.Contains(rangeStr, "-"):
 		// IP range notation (e.g., "192.168.1.1-192.168.1.100")
 		return parseIPRangeDash(rangeStr)
-	} else {
+	default:
 		// Single IP
 		if net.ParseIP(rangeStr) == nil {
 			return nil, &net.ParseError{Type: "IP address", Text: rangeStr}
@@ -43,7 +51,7 @@ func expandIPNet(ipNet *net.IPNet) []string {
 	for ip := ipNet.IP.Mask(ipNet.Mask); ipNet.Contains(ip); incIP(ip) {
 		ips = append(ips, ip.String())
 		// Limit expansion to prevent memory issues with large ranges
-		if len(ips) > 1000 {
+		if len(ips) > maxIPExpansionLimit {
 			break
 		}
 	}
@@ -53,7 +61,7 @@ func expandIPNet(ipNet *net.IPNet) []string {
 // parseIPRangeDash parses IP range in "IP-IP" format
 func parseIPRangeDash(rangeStr string) ([]string, error) {
 	parts := strings.Split(rangeStr, "-")
-	if len(parts) != 2 {
+	if len(parts) != ipRangePartsCount {
 		return nil, &net.ParseError{Type: "IP range", Text: rangeStr}
 	}
 
@@ -73,7 +81,7 @@ func parseIPRangeDash(rangeStr string) ([]string, error) {
 	for ip := startIP; !ipGreaterThan(ip, endIP); incIP(ip) {
 		ips = append(ips, ip.String())
 		// Limit expansion to prevent memory issues
-		if len(ips) > 1000 {
+		if len(ips) > maxIPExpansionLimit {
 			break
 		}
 	}
@@ -100,7 +108,7 @@ func ipGreaterThan(ip1, ip2 net.IP) bool {
 
 // ipToInt converts an IP address to a 128-bit integer
 func ipToInt(ip net.IP) int64 {
-	if len(ip) == 16 {
+	if len(ip) == ipv6AddressLength {
 		return int64(ip[0])<<56 | int64(ip[1])<<48 | int64(ip[2])<<40 |
 			int64(ip[3])<<32 | int64(ip[4])<<24 | int64(ip[5])<<16 |
 			int64(ip[6])<<8 | int64(ip[7])

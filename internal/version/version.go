@@ -1,3 +1,4 @@
+// Package version provides version information for the application.
 package version
 
 // These variables are injected via -ldflags during build.
@@ -7,6 +8,7 @@ var (
 	Date    = "unknown" // build timestamp in UTC, RFC3339
 )
 
+// String returns the version string
 func String() string {
 	return Version
 }

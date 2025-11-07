@@ -1,15 +1,14 @@
+// Package config provides configuration management for the ht-notifier application.
 package config
 
 import (
 	"crypto/aes"
 	"crypto/cipher"
-	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net"
 	"net/url"
 	"os"
@@ -22,6 +21,42 @@ import (
 	"github.com/spf13/viper"
 )
 
+const (
+	maskedSecretValue = "****"
+
+	// Server defaults
+	defaultReadHeaderTimeout = 5 * time.Second
+	defaultShutdownTimeout   = 10 * time.Second
+	defaultMaxRequestSize    = 1024 * 1024 // 1MB
+	defaultRateLimit         = 100
+	defaultRateLimitBurst    = 20
+
+	// Harbor defaults
+	defaultHarborTimeout = 30 * time.Second
+
+	// Notifier defaults
+	defaultNotifierTimeout        = 5 * time.Second
+	defaultNotifierRatePerMinute  = 30
+	defaultTelegramMaxMsgLength   = 4096
+	defaultSlackMaxMsgLength      = 4000
+	defaultMattermostMaxMsgLength = 4000
+
+	// Email defaults
+	defaultSMTPPort    = 587
+	defaultSMTPTimeout = 30 * time.Second
+
+	// Processing defaults
+	defaultMaxConcurrency = 8
+	defaultMaxQueue       = 1024
+	defaultMaxAttempts    = 8
+	defaultMaxBackoff     = 2 * time.Minute
+
+	// Webhook defaults
+	defaultWebhookMaxConnections = 40
+	defaultWebhookMaxConnLimit   = 100
+)
+
+// Config represents the main application configuration.
 type Config struct {
 	Server        ServerConfig        `yaml:"server"`
 	Harbor        HarborConfig        `yaml:"harbor"`
@@ -31,6 +66,7 @@ type Config struct {
 	Templates     TemplateConfig      `yaml:"templates"`
 }
 
+// ServerConfig holds HTTP server configuration.
 type ServerConfig struct {
 	Addr              string        `yaml:"addr"`
 	BasePath          string        `yaml:"base_path"`
@@ -42,8 +78,19 @@ type ServerConfig struct {
 	MaxRequestSize    int64         `yaml:"max_request_size"`
 	RateLimit         int           `yaml:"rate_limit"`
 	RateLimitBurst    int           `yaml:"rate_limit_burst"`
+	JWT               JWTConfig     `yaml:"jwt"`
 }
 
+// JWTConfig holds JWT authentication configuration.
+type JWTConfig struct {
+	Secret     string        `yaml:"secret"`
+	Algorithm  string        `yaml:"algorithm"` // HS256, RS256, etc.
+	Issuer     string        `yaml:"issuer"`
+	Audience   []string      `yaml:"audience"`
+	Expiration time.Duration `yaml:"expiration"`
+}
+
+// HarborConfig holds Harbor API client configuration.
 type HarborConfig struct {
 	BaseURL            string        `yaml:"base_url"`
 	Username           string        `yaml:"username"`
@@ -52,6 +99,7 @@ type HarborConfig struct {
 	Timeout            time.Duration `yaml:"timeout"`
 }
 
+// NotifyConfig holds notification service configurations.
 type NotifyConfig struct {
 	Telegram   TelegramConfig   `yaml:"telegram"`
 	Email      EmailConfig      `yaml:"email"`
@@ -59,6 +107,7 @@ type NotifyConfig struct {
 	Mattermost MattermostConfig `yaml:"mattermost"`
 }
 
+// TelegramConfig holds Telegram bot configuration.
 type TelegramConfig struct {
 	Enabled       bool                `yaml:"enabled"`
 	BotToken      string              `yaml:"bot_token"`
@@ -71,6 +120,7 @@ type TelegramConfig struct {
 	Templates     TemplateConfig      `yaml:"templates"`
 }
 
+// WebhookConfig holds webhook configuration for Telegram/Mattermost.
 type WebhookConfig struct {
 	Enabled        bool     `yaml:"enabled"`
 	URL            string   `yaml:"url"`
@@ -79,6 +129,7 @@ type WebhookConfig struct {
 	AllowedUpdates []string `yaml:"allowed_updates"`
 }
 
+// MessageFormatConfig holds message formatting configuration.
 type MessageFormatConfig struct {
 	EscapeMarkdown    bool           `yaml:"escape_markdown"`
 	DisableWebPreview bool           `yaml:"disable_web_preview"`
@@ -99,6 +150,7 @@ type TemplateConfig struct {
 	WatchFiles bool   `yaml:"watch_files"` // Watch template files for changes
 }
 
+// SlackConfig holds Slack notification configuration.
 type SlackConfig struct {
 	Enabled           bool                `yaml:"enabled"`
 	Token             string              `yaml:"token"`
@@ -123,6 +175,7 @@ type SlackConfig struct {
 	EnableScheduling  bool                `yaml:"enable_scheduling"`
 }
 
+// MattermostConfig holds Mattermost notification configuration.
 type MattermostConfig struct {
 	Enabled       bool                `yaml:"enabled"`
 	ServerURL     string              `yaml:"server_url"`
@@ -145,6 +198,7 @@ type MattermostConfig struct {
 	Webhook       WebhookConfig       `yaml:"webhook"`
 }
 
+// SeverityColors holds color configuration for different severity levels.
 type SeverityColors struct {
 	Critical string `yaml:"critical"`
 	High     string `yaml:"high"`
@@ -153,6 +207,7 @@ type SeverityColors struct {
 	Unknown  string `yaml:"unknown"`
 }
 
+// EmailConfig holds email notification configuration.
 type EmailConfig struct {
 	Enabled       bool       `yaml:"enabled"`
 	SMTP          SMTPConfig `yaml:"smtp"`
@@ -162,6 +217,7 @@ type EmailConfig struct {
 	SubjectPrefix string     `yaml:"subject_prefix"`
 }
 
+// SMTPConfig holds SMTP server configuration.
 type SMTPConfig struct {
 	Host                     string        `yaml:"host"`
 	Port                     int           `yaml:"port"`
@@ -217,6 +273,7 @@ type SMTPConfig struct {
 	SSNoverifyNoNoNoNames    bool          `yaml:"ssl_noverify_no_no_no_names"`
 }
 
+// ProcessingConfig holds event processing configuration.
 type ProcessingConfig struct {
 	EnrichViaHarborAPI bool        `yaml:"enrich_via_harbor_api"`
 	MaxConcurrency     int         `yaml:"max_concurrency"`
@@ -224,17 +281,20 @@ type ProcessingConfig struct {
 	Retry              RetryConfig `yaml:"retry"`
 }
 
+// RetryConfig holds retry policy configuration.
 type RetryConfig struct {
 	MaxAttempts    int           `yaml:"max_attempts"`
 	InitialBackoff time.Duration `yaml:"initial_backoff"`
 	MaxBackoff     time.Duration `yaml:"max_backoff"`
 }
 
+// ObservabilityConfig holds observability (metrics, logging) configuration.
 type ObservabilityConfig struct {
 	MetricsAddr string    `yaml:"metrics_addr"`
 	Log         LogConfig `yaml:"log"`
 }
 
+// LogConfig holds logging configuration.
 type LogConfig struct {
 	Level  string `yaml:"level"`
 	Format string `yaml:"format"`
@@ -243,121 +303,148 @@ type LogConfig struct {
 // DefaultConfig returns a default configuration
 func DefaultConfig() *Config {
 	return &Config{
-		Server: ServerConfig{
-			Addr:              ":8080",
-			BasePath:          "/",
-			ReadHeaderTimeout: 5 * time.Second,
-			ShutdownTimeout:   10 * time.Second,
-			MaxRequestSize:    1024 * 1024,
-			RateLimit:         100,
-			RateLimitBurst:    20,
+		Server:        defaultServerConfig(),
+		Harbor:        defaultHarborConfig(),
+		Notify:        defaultNotifyConfig(),
+		Processing:    defaultProcessingConfig(),
+		Observability: defaultObservabilityConfig(),
+		Templates:     defaultTemplateConfig(),
+	}
+}
+
+func defaultServerConfig() ServerConfig {
+	return ServerConfig{
+		Addr:              ":8080",
+		BasePath:          "/",
+		ReadHeaderTimeout: defaultReadHeaderTimeout,
+		ShutdownTimeout:   defaultShutdownTimeout,
+		MaxRequestSize:    defaultMaxRequestSize,
+		RateLimit:         defaultRateLimit,
+		RateLimitBurst:    defaultRateLimitBurst,
+		JWT: JWTConfig{
+			Secret:     "",
+			Algorithm:  "HS256",
+			Issuer:     "",
+			Audience:   []string{},
+			Expiration: 1 * time.Hour,
 		},
-		Harbor: HarborConfig{
-			BaseURL:  "https://harbor.local",
-			Username: "admin",
-			Timeout:  30 * time.Second,
+	}
+}
+
+func defaultHarborConfig() HarborConfig {
+	return HarborConfig{
+		BaseURL:  "https://harbor.local",
+		Username: "admin",
+		Timeout:  defaultHarborTimeout,
+	}
+}
+
+func defaultNotifyConfig() NotifyConfig {
+	return NotifyConfig{
+		Telegram:   defaultTelegramConfig(),
+		Email:      defaultEmailConfig(),
+		Slack:      defaultSlackConfig(),
+		Mattermost: defaultMattermostConfig(),
+	}
+}
+
+func defaultTelegramConfig() TelegramConfig {
+	return TelegramConfig{
+		Enabled:       false,
+		Timeout:       defaultNotifierTimeout,
+		RatePerMinute: defaultNotifierRatePerMinute,
+		Debug:         false,
+		MessageFormat: defaultMessageFormatConfig(defaultTelegramMaxMsgLength, true),
+	}
+}
+
+func defaultEmailConfig() EmailConfig {
+	return EmailConfig{
+		Enabled: false,
+		SMTP: SMTPConfig{
+			Port:       defaultSMTPPort,
+			StartTLS:   true,
+			Timeout:    defaultSMTPTimeout,
+			AuthType:   "plain",
+			Encryption: "tls",
 		},
-		Notify: NotifyConfig{
-			Telegram: TelegramConfig{
-				Enabled:       false,
-				Timeout:       5 * time.Second,
-				RatePerMinute: 30,
-				Debug:         false,
-				MessageFormat: MessageFormatConfig{
-					EscapeMarkdown:    true,
-					DisableWebPreview: true,
-					EnableHTML:        false,
-					ShowTimestamp:     true,
-					IncludeSeverity:   true,
-					MaxMessageLength:  4096,
-					SeverityColors: SeverityColors{
-						Critical: "🔴",
-						High:     "🟠",
-						Medium:   "🟡",
-						Low:      "🟢",
-						Unknown:  "⚪",
-					},
-				},
-			},
-			Email: EmailConfig{
-				Enabled: false,
-				SMTP: SMTPConfig{
-					Port:     587,
-					StartTLS: true,
-					Timeout:  30 * time.Second,
-					AuthType: "plain",
-					Encryption: "tls",
-				},
-				SubjectPrefix: "[Harbor Alert]",
-			},
-			Slack: SlackConfig{
-				Enabled: false,
-				Timeout: 5 * time.Second,
-				RatePerMinute: 30,
-				Debug:   false,
-				Username: "Harbor Notifier",
-				IconEmoji: ":warning:",
-				MessageFormat: MessageFormatConfig{
-					EscapeMarkdown:    true,
-					DisableWebPreview: false,
-					EnableHTML:        false,
-					ShowTimestamp:     true,
-					IncludeSeverity:   true,
-					MaxMessageLength:  4000,
-					SeverityColors: SeverityColors{
-						Critical: "🔴",
-						High:     "🟠",
-						Medium:   "🟡",
-						Low:      "🟢",
-						Unknown:  "⚪",
-					},
-				},
-			},
-			Mattermost: MattermostConfig{
-				Enabled: false,
-				Timeout: 5 * time.Second,
-				RatePerMinute: 30,
-				Debug:   false,
-				Username: "Harbor Notifier",
-				IconEmoji: ":warning:",
-				ChannelType: "public",
-				MessageFormat: MessageFormatConfig{
-					EscapeMarkdown:    true,
-					DisableWebPreview: false,
-					EnableHTML:        false,
-					ShowTimestamp:     true,
-					IncludeSeverity:   true,
-					MaxMessageLength:  4000,
-					SeverityColors: SeverityColors{
-						Critical: "🔴",
-						High:     "🟠",
-						Medium:   "🟡",
-						Low:      "🟢",
-						Unknown:  "⚪",
-					},
-				},
-			},
+		SubjectPrefix: "[Harbor Alert]",
+	}
+}
+
+func defaultSlackConfig() SlackConfig {
+	return SlackConfig{
+		Enabled:       false,
+		Timeout:       defaultNotifierTimeout,
+		RatePerMinute: defaultNotifierRatePerMinute,
+		Debug:         false,
+		Username:      "Harbor Notifier",
+		IconEmoji:     ":warning:",
+		MessageFormat: defaultMessageFormatConfig(defaultSlackMaxMsgLength, false),
+	}
+}
+
+func defaultMattermostConfig() MattermostConfig {
+	return MattermostConfig{
+		Enabled:       false,
+		Timeout:       defaultNotifierTimeout,
+		RatePerMinute: defaultNotifierRatePerMinute,
+		Debug:         false,
+		Username:      "Harbor Notifier",
+		IconEmoji:     ":warning:",
+		ChannelType:   "public",
+		MessageFormat: defaultMessageFormatConfig(defaultMattermostMaxMsgLength, false),
+	}
+}
+
+func defaultMessageFormatConfig(maxLength int, disableWebPreview bool) MessageFormatConfig {
+	return MessageFormatConfig{
+		EscapeMarkdown:    true,
+		DisableWebPreview: disableWebPreview,
+		EnableHTML:        false,
+		ShowTimestamp:     true,
+		IncludeSeverity:   true,
+		MaxMessageLength:  maxLength,
+		SeverityColors:    defaultSeverityColors(),
+	}
+}
+
+func defaultSeverityColors() SeverityColors {
+	return SeverityColors{
+		Critical: "🔴",
+		High:     "🟠",
+		Medium:   "🟡",
+		Low:      "🟢",
+		Unknown:  "⚪",
+	}
+}
+
+func defaultProcessingConfig() ProcessingConfig {
+	return ProcessingConfig{
+		EnrichViaHarborAPI: true,
+		MaxConcurrency:     defaultMaxConcurrency,
+		MaxQueue:           defaultMaxQueue,
+		Retry: RetryConfig{
+			MaxAttempts:    defaultMaxAttempts,
+			InitialBackoff: 1 * time.Second,
+			MaxBackoff:     defaultMaxBackoff,
 		},
-		Processing: ProcessingConfig{
-			EnrichViaHarborAPI: true,
-			MaxConcurrency:     8,
-			MaxQueue:           1024,
-			Retry: RetryConfig{
-				MaxAttempts:    8,
-				InitialBackoff: 1 * time.Second,
-				MaxBackoff:     2 * time.Minute,
-			},
+	}
+}
+
+func defaultObservabilityConfig() ObservabilityConfig {
+	return ObservabilityConfig{
+		MetricsAddr: ":9090",
+		Log: LogConfig{
+			Level:  "info",
+			Format: "json",
 		},
-		Observability: ObservabilityConfig{
-			MetricsAddr: ":9090",
-			Log: LogConfig{
-				Level:  "info",
-				Format: "json",
-			},
-		},
-		Templates: TemplateConfig{
-			Enabled: false,
-		},
+	}
+}
+
+func defaultTemplateConfig() TemplateConfig {
+	return TemplateConfig{
+		Enabled: false,
 	}
 }
 
@@ -369,7 +456,9 @@ func Load(configPath string) (*Config, error) {
 	setDefaults(v)
 
 	// Bind flags
-	bindFlags(v)
+	if err := bindFlags(v); err != nil {
+		return nil, fmt.Errorf("failed to bind flags: %w", err)
+	}
 
 	// Load .env file if it exists
 	envPath := getEnvPath()
@@ -404,120 +493,77 @@ func Load(configPath string) (*Config, error) {
 	return &cfg, nil
 }
 
-// decryptSensitiveData decrypts sensitive configuration fields
-func (c *Config) decryptSensitiveData() error {
+// sensitiveField represents a sensitive configuration field
+type sensitiveField struct {
+	name     string
+	getValue func(*Config) string
+	setValue func(*Config, string)
+}
+
+// getSensitiveFields returns all sensitive fields that need encryption/decryption
+func getSensitiveFields() []sensitiveField {
+	return []sensitiveField{
+		{
+			name:     "Harbor password",
+			getValue: func(c *Config) string { return c.Harbor.Password },
+			setValue: func(c *Config, v string) { c.Harbor.Password = v },
+		},
+		{
+			name:     "Telegram bot token",
+			getValue: func(c *Config) string { return c.Notify.Telegram.BotToken },
+			setValue: func(c *Config, v string) { c.Notify.Telegram.BotToken = v },
+		},
+		{
+			name:     "Slack token",
+			getValue: func(c *Config) string { return c.Notify.Slack.Token },
+			setValue: func(c *Config, v string) { c.Notify.Slack.Token = v },
+		},
+		{
+			name:     "Mattermost token",
+			getValue: func(c *Config) string { return c.Notify.Mattermost.Token },
+			setValue: func(c *Config, v string) { c.Notify.Mattermost.Token = v },
+		},
+		{
+			name:     "SMTP password",
+			getValue: func(c *Config) string { return c.Notify.Email.SMTP.Password },
+			setValue: func(c *Config, v string) { c.Notify.Email.SMTP.Password = v },
+		},
+		{
+			name:     "JWT secret",
+			getValue: func(c *Config) string { return c.Server.JWT.Secret },
+			setValue: func(c *Config, v string) { c.Server.JWT.Secret = v },
+		},
+	}
+}
+
+// processSensitiveData processes sensitive configuration fields with the given operation
+func (c *Config) processSensitiveData(operation func(string, string) (string, error), operationName string) error {
 	// Get encryption key from environment or generate one
 	encryptionKey := getEncryptionKey()
 	if encryptionKey == "" {
-		// If no encryption key is provided, skip decryption
+		// If no encryption key is provided, skip processing
 		// This allows backward compatibility
 		return nil
 	}
 
-	// Decrypt Harbor password
-	if c.Harbor.Password != "" {
-		decrypted, err := decrypt(c.Harbor.Password, encryptionKey)
-		if err != nil {
-			return fmt.Errorf("failed to decrypt Harbor password: %w", err)
+	fields := getSensitiveFields()
+	for _, field := range fields {
+		value := field.getValue(c)
+		if value != "" {
+			processed, err := operation(value, encryptionKey)
+			if err != nil {
+				return fmt.Errorf("failed to %s %s: %w", operationName, field.name, err)
+			}
+			field.setValue(c, processed)
 		}
-		c.Harbor.Password = decrypted
-	}
-
-	// Decrypt Telegram bot token
-	if c.Notify.Telegram.BotToken != "" {
-		decrypted, err := decrypt(c.Notify.Telegram.BotToken, encryptionKey)
-		if err != nil {
-			return fmt.Errorf("failed to decrypt Telegram bot token: %w", err)
-		}
-		c.Notify.Telegram.BotToken = decrypted
-	}
-
-	// Decrypt Slack token
-	if c.Notify.Slack.Token != "" {
-		decrypted, err := decrypt(c.Notify.Slack.Token, encryptionKey)
-		if err != nil {
-			return fmt.Errorf("failed to decrypt Slack token: %w", err)
-		}
-		c.Notify.Slack.Token = decrypted
-	}
-
-	// Decrypt Mattermost token
-	if c.Notify.Mattermost.Token != "" {
-		decrypted, err := decrypt(c.Notify.Mattermost.Token, encryptionKey)
-		if err != nil {
-			return fmt.Errorf("failed to decrypt Mattermost token: %w", err)
-		}
-		c.Notify.Mattermost.Token = decrypted
-	}
-
-	// Decrypt SMTP credentials
-	if c.Notify.Email.SMTP.Password != "" {
-		decrypted, err := decrypt(c.Notify.Email.SMTP.Password, encryptionKey)
-		if err != nil {
-			return fmt.Errorf("failed to decrypt SMTP password: %w", err)
-		}
-		c.Notify.Email.SMTP.Password = decrypted
 	}
 
 	return nil
 }
 
-// encryptSensitiveData encrypts sensitive configuration fields
-func (c *Config) encryptSensitiveData() error {
-	// Get encryption key from environment or generate one
-	encryptionKey := getEncryptionKey()
-	if encryptionKey == "" {
-		// If no encryption key is provided, skip encryption
-		// This allows backward compatibility
-		return nil
-	}
-
-	// Encrypt Harbor password
-	if c.Harbor.Password != "" {
-		encrypted, err := encrypt(c.Harbor.Password, encryptionKey)
-		if err != nil {
-			return fmt.Errorf("failed to encrypt Harbor password: %w", err)
-		}
-		c.Harbor.Password = encrypted
-	}
-
-	// Encrypt Telegram bot token
-	if c.Notify.Telegram.BotToken != "" {
-		encrypted, err := encrypt(c.Notify.Telegram.BotToken, encryptionKey)
-		if err != nil {
-			return fmt.Errorf("failed to encrypt Telegram bot token: %w", err)
-		}
-		c.Notify.Telegram.BotToken = encrypted
-	}
-
-	// Encrypt Slack token
-	if c.Notify.Slack.Token != "" {
-		encrypted, err := encrypt(c.Notify.Slack.Token, encryptionKey)
-		if err != nil {
-			return fmt.Errorf("failed to encrypt Slack token: %w", err)
-		}
-		c.Notify.Slack.Token = encrypted
-	}
-
-	// Encrypt Mattermost token
-	if c.Notify.Mattermost.Token != "" {
-		encrypted, err := encrypt(c.Notify.Mattermost.Token, encryptionKey)
-		if err != nil {
-			return fmt.Errorf("failed to encrypt Mattermost token: %w", err)
-		}
-		c.Notify.Mattermost.Token = encrypted
-	}
-
-	// Encrypt SMTP credentials
-	if c.Notify.Email.SMTP.Password != "" {
-		encrypted, err := encrypt(c.Notify.Email.SMTP.Password, encryptionKey)
-		if err != nil {
-			return fmt.Errorf("failed to encrypt SMTP password: %w", err)
-		}
-		c.Notify.Email.SMTP.Password = encrypted
-	}
-
-	return nil
+// decryptSensitiveData decrypts sensitive configuration fields
+func (c *Config) decryptSensitiveData() error {
+	return c.processSensitiveData(decrypt, "decrypt")
 }
 
 // getEncryptionKey returns the encryption key from environment or generates one
@@ -532,38 +578,6 @@ func getEncryptionKey() string {
 		}
 	}
 	return key
-}
-
-// encrypt encrypts data using AES-GCM
-func encrypt(plaintext, key string) (string, error) {
-	if plaintext == "" {
-		return "", nil
-	}
-
-	// Derive key from the provided key using SHA-256
-	hashedKey := sha256.Sum256([]byte(key))
-	block, err := aes.NewCipher(hashedKey[:])
-	if err != nil {
-		return "", err
-	}
-
-	// Create GCM mode
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return "", err
-	}
-
-	// Create a nonce
-	nonce := make([]byte, gcm.NonceSize())
-	if _, err = io.ReadFull(rand.Reader, nonce); err != nil {
-		return "", err
-	}
-
-	// Encrypt the data
-	ciphertext := gcm.Seal(nonce, nonce, []byte(plaintext), nil)
-
-	// Return base64 encoded encrypted data
-	return base64.StdEncoding.EncodeToString(ciphertext), nil
 }
 
 // decrypt decrypts data using AES-GCM
@@ -612,29 +626,39 @@ func decrypt(ciphertext, key string) (string, error) {
 func (c *Config) MaskSensitiveData() *Config {
 	masked := *c // Create a shallow copy
 
+	// Mask HMAC secret
+	if masked.Server.HMACSecret != "" {
+		masked.Server.HMACSecret = maskedSecretValue
+	}
+
+	// Mask JWT secret
+	if masked.Server.JWT.Secret != "" {
+		masked.Server.JWT.Secret = maskedSecretValue
+	}
+
 	// Mask Harbor password
 	if masked.Harbor.Password != "" {
-		masked.Harbor.Password = "****"
+		masked.Harbor.Password = maskedSecretValue
 	}
 
 	// Mask Telegram bot token
 	if masked.Notify.Telegram.BotToken != "" {
-		masked.Notify.Telegram.BotToken = "****"
+		masked.Notify.Telegram.BotToken = maskedSecretValue
 	}
 
 	// Mask Slack token
 	if masked.Notify.Slack.Token != "" {
-		masked.Notify.Slack.Token = "****"
+		masked.Notify.Slack.Token = maskedSecretValue
 	}
 
 	// Mask Mattermost token
 	if masked.Notify.Mattermost.Token != "" {
-		masked.Notify.Mattermost.Token = "****"
+		masked.Notify.Mattermost.Token = maskedSecretValue
 	}
 
 	// Mask SMTP credentials
 	if masked.Notify.Email.SMTP.Password != "" {
-		masked.Notify.Email.SMTP.Password = "****"
+		masked.Notify.Email.SMTP.Password = maskedSecretValue
 	}
 
 	return &masked
@@ -731,60 +755,66 @@ func dirExists(path string) bool {
 }
 
 func setDefaults(v *viper.Viper) {
-	// Server configuration
+	setServerDefaults(v)
+	setHarborDefaults(v)
+	setTelegramDefaults(v)
+	setSlackDefaults(v)
+	setMattermostDefaults(v)
+	setEmailDefaults(v)
+	setProcessingDefaults(v)
+	setObservabilityDefaults(v)
+	setTemplateDefaults(v)
+}
+
+func setServerDefaults(v *viper.Viper) {
 	v.SetDefault("server.addr", ":8080")
 	v.SetDefault("server.base_path", "/")
 	v.SetDefault("server.read_header_timeout", "5s")
 	v.SetDefault("server.shutdown_timeout", "10s")
 	v.SetDefault("server.enable_pprof", false)
-	v.SetDefault("server.max_request_size", 1024*1024) // 1MB
-	v.SetDefault("server.rate_limit", 100)             // requests per minute
-	v.SetDefault("server.rate_limit_burst", 20)        // burst requests
+	v.SetDefault("server.max_request_size", defaultMaxRequestSize)
+	v.SetDefault("server.rate_limit", defaultRateLimit)
+	v.SetDefault("server.rate_limit_burst", defaultRateLimitBurst)
 
-	// Harbor configuration
+	// JWT configuration
+	v.SetDefault("server.jwt.secret", "")
+	v.SetDefault("server.jwt.algorithm", "HS256")
+	v.SetDefault("server.jwt.issuer", "")
+	v.SetDefault("server.jwt.audience", []string{})
+	v.SetDefault("server.jwt.expiration", "1h")
+}
+
+func setHarborDefaults(v *viper.Viper) {
 	v.SetDefault("harbor.base_url", "https://harbor.local")
 	v.SetDefault("harbor.timeout", "30s")
+}
 
+func setTelegramDefaults(v *viper.Viper) {
 	// Telegram notification configuration
 	v.SetDefault("notify.telegram.enabled", false)
 	v.SetDefault("notify.telegram.timeout", "5s")
-	v.SetDefault("notify.telegram.rate_per_minute", 30)
+	v.SetDefault("notify.telegram.rate_per_minute", defaultNotifierRatePerMinute)
 	v.SetDefault("notify.telegram.debug", false)
 
 	// Telegram webhook configuration
 	v.SetDefault("notify.telegram.webhook.enabled", false)
-	v.SetDefault("notify.telegram.webhook.max_connections", 40)
+	v.SetDefault("notify.telegram.webhook.max_connections", defaultWebhookMaxConnections)
 	v.SetDefault("notify.telegram.webhook.allowed_updates", []string{"message", "edited_message", "callback_query"})
 
 	// Telegram message format configuration
-	v.SetDefault("notify.telegram.message_format.escape_markdown", true)
-	v.SetDefault("notify.telegram.message_format.disable_web_preview", true)
-	v.SetDefault("notify.telegram.message_format.enable_html", false)
-	v.SetDefault("notify.telegram.message_format.show_timestamp", true)
-	v.SetDefault("notify.telegram.message_format.include_severity", true)
-	v.SetDefault("notify.telegram.message_format.max_message_length", 4096)
-	v.SetDefault("notify.telegram.message_format.custom_prefix", "")
-	v.SetDefault("notify.telegram.message_format.custom_suffix", "")
-
-	// Telegram severity colors
-	v.SetDefault("notify.telegram.message_format.severity_colors.critical", "🔴")
-	v.SetDefault("notify.telegram.message_format.severity_colors.high", "🟠")
-	v.SetDefault("notify.telegram.message_format.severity_colors.medium", "🟡")
-	v.SetDefault("notify.telegram.message_format.severity_colors.low", "🟢")
-	v.SetDefault("notify.telegram.message_format.severity_colors.unknown", "⚪")
+	setMessageFormatDefaults(v, "notify.telegram.message_format", defaultTelegramMaxMsgLength, true)
 
 	// Telegram template configuration
-	v.SetDefault("notify.telegram.templates.enabled", false)
-	v.SetDefault("notify.telegram.templates.path", "")
-	v.SetDefault("notify.telegram.templates.reload", false)
-	v.SetDefault("notify.telegram.templates.watch_files", false)
+	setTemplateDefaultsForNotifier(v, "notify.telegram.templates")
+}
 
+func setSlackDefaults(v *viper.Viper) {
 	// Slack notification configuration
 	v.SetDefault("notify.slack.enabled", false)
 	v.SetDefault("notify.slack.token", "")
 	v.SetDefault("notify.slack.channel", "")
 	v.SetDefault("notify.slack.timeout", "5s")
-	v.SetDefault("notify.slack.rate_per_minute", 30)
+	v.SetDefault("notify.slack.rate_per_minute", defaultNotifierRatePerMinute)
 	v.SetDefault("notify.slack.debug", false)
 	v.SetDefault("notify.slack.username", "Harbor Notifier")
 	v.SetDefault("notify.slack.icon_emoji", ":warning:")
@@ -798,27 +828,10 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("notify.slack.reply_broadcast", false)
 
 	// Slack message format configuration
-	v.SetDefault("notify.slack.message_format.escape_markdown", true)
-	v.SetDefault("notify.slack.message_format.disable_web_preview", false)
-	v.SetDefault("notify.slack.message_format.enable_html", false)
-	v.SetDefault("notify.slack.message_format.show_timestamp", true)
-	v.SetDefault("notify.slack.message_format.include_severity", true)
-	v.SetDefault("notify.slack.message_format.max_message_length", 4000)
-	v.SetDefault("notify.slack.message_format.custom_prefix", "")
-	v.SetDefault("notify.slack.message_format.custom_suffix", "")
-
-	// Slack severity colors
-	v.SetDefault("notify.slack.message_format.severity_colors.critical", "🔴")
-	v.SetDefault("notify.slack.message_format.severity_colors.high", "🟠")
-	v.SetDefault("notify.slack.message_format.severity_colors.medium", "🟡")
-	v.SetDefault("notify.slack.message_format.severity_colors.low", "🟢")
-	v.SetDefault("notify.slack.message_format.severity_colors.unknown", "⚪")
+	setMessageFormatDefaults(v, "notify.slack.message_format", defaultSlackMaxMsgLength, false)
 
 	// Slack template configuration
-	v.SetDefault("notify.slack.templates.enabled", false)
-	v.SetDefault("notify.slack.templates.path", "")
-	v.SetDefault("notify.slack.templates.reload", false)
-	v.SetDefault("notify.slack.templates.watch_files", false)
+	setTemplateDefaultsForNotifier(v, "notify.slack.templates")
 
 	// Slack advanced features
 	v.SetDefault("notify.slack.enable_blocks", false)
@@ -827,7 +840,9 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("notify.slack.reply_broadcast", false)
 	v.SetDefault("notify.slack.enable_reactions", false)
 	v.SetDefault("notify.slack.enable_scheduling", false)
+}
 
+func setMattermostDefaults(v *viper.Viper) {
 	// Mattermost notification configuration
 	v.SetDefault("notify.mattermost.enabled", false)
 	v.SetDefault("notify.mattermost.server_url", "")
@@ -835,7 +850,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("notify.mattermost.channel", "")
 	v.SetDefault("notify.mattermost.team", "")
 	v.SetDefault("notify.mattermost.timeout", "5s")
-	v.SetDefault("notify.mattermost.rate_per_minute", 30)
+	v.SetDefault("notify.mattermost.rate_per_minute", defaultNotifierRatePerMinute)
 	v.SetDefault("notify.mattermost.debug", false)
 	v.SetDefault("notify.mattermost.username", "Harbor Notifier")
 	v.SetDefault("notify.mattermost.icon_emoji", ":warning:")
@@ -850,36 +865,30 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("notify.mattermost.webhook.enabled", false)
 	v.SetDefault("notify.mattermost.webhook.url", "")
 	v.SetDefault("notify.mattermost.webhook.secret_token", "")
-	v.SetDefault("notify.mattermost.webhook.max_connections", 40)
+	v.SetDefault("notify.mattermost.webhook.max_connections", defaultWebhookMaxConnections)
 	v.SetDefault("notify.mattermost.webhook.allowed_updates", []string{})
 
 	// Mattermost message format configuration
-	v.SetDefault("notify.mattermost.message_format.escape_markdown", true)
-	v.SetDefault("notify.mattermost.message_format.disable_web_preview", false)
-	v.SetDefault("notify.mattermost.message_format.enable_html", false)
-	v.SetDefault("notify.mattermost.message_format.show_timestamp", true)
-	v.SetDefault("notify.mattermost.message_format.include_severity", true)
-	v.SetDefault("notify.mattermost.message_format.max_message_length", 4000)
-	v.SetDefault("notify.mattermost.message_format.custom_prefix", "")
-	v.SetDefault("notify.mattermost.message_format.custom_suffix", "")
-
-	// Mattermost severity colors
-	v.SetDefault("notify.mattermost.message_format.severity_colors.critical", "🔴")
-	v.SetDefault("notify.mattermost.message_format.severity_colors.high", "🟠")
-	v.SetDefault("notify.mattermost.message_format.severity_colors.medium", "🟡")
-	v.SetDefault("notify.mattermost.message_format.severity_colors.low", "🟢")
-	v.SetDefault("notify.mattermost.message_format.severity_colors.unknown", "⚪")
+	setMessageFormatDefaults(v, "notify.mattermost.message_format", defaultMattermostMaxMsgLength, false)
 
 	// Mattermost template configuration
-	v.SetDefault("notify.mattermost.templates.enabled", false)
-	v.SetDefault("notify.mattermost.templates.path", "")
-	v.SetDefault("notify.mattermost.templates.reload", false)
-	v.SetDefault("notify.mattermost.templates.watch_files", false)
+	setTemplateDefaultsForNotifier(v, "notify.mattermost.templates")
+}
 
-	// Email notification configuration
+func setEmailDefaults(v *viper.Viper) {
+	setEmailBasicDefaults(v)
+	setEmailSMTPDefaults(v)
+	setEmailSSLDefaults(v)
+	v.SetDefault("notify.email.subject_prefix", "[Harbor Alert]")
+}
+
+func setEmailBasicDefaults(v *viper.Viper) {
 	v.SetDefault("notify.email.enabled", false)
+}
+
+func setEmailSMTPDefaults(v *viper.Viper) {
 	v.SetDefault("notify.email.smtp.host", "")
-	v.SetDefault("notify.email.smtp.port", 587)
+	v.SetDefault("notify.email.smtp.port", defaultSMTPPort)
 	v.SetDefault("notify.email.smtp.username", "")
 	v.SetDefault("notify.email.smtp.password", "")
 	v.SetDefault("notify.email.smtp.from", "")
@@ -891,6 +900,9 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("notify.email.smtp.local_name", "")
 	v.SetDefault("notify.email.smtp.disable_helo", false)
 	v.SetDefault("notify.email.smtp.disable_starttls", false)
+}
+
+func setEmailSSLDefaults(v *viper.Viper) {
 	v.SetDefault("notify.email.smtp.ssl_insecure", false)
 	v.SetDefault("notify.email.smtp.ssl_nocertcheck", false)
 	v.SetDefault("notify.email.smtp.ssl_noverify", false)
@@ -930,21 +942,26 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("notify.email.smtp.ssl_noverify_no_no_all_names", false)
 	v.SetDefault("notify.email.smtp.ssl_noverify_no_no_any_name", false)
 	v.SetDefault("notify.email.smtp.ssl_noverify_no_no_no_names", false)
-	v.SetDefault("notify.email.subject_prefix", "[Harbor Alert]")
+}
 
+func setProcessingDefaults(v *viper.Viper) {
 	// Processing configuration
 	v.SetDefault("processing.enrich_via_harbor_api", true)
-	v.SetDefault("processing.max_concurrency", 8)
-	v.SetDefault("processing.max_queue", 1024)
-	v.SetDefault("processing.retry.max_attempts", 8)
+	v.SetDefault("processing.max_concurrency", defaultMaxConcurrency)
+	v.SetDefault("processing.max_queue", defaultMaxQueue)
+	v.SetDefault("processing.retry.max_attempts", defaultMaxAttempts)
 	v.SetDefault("processing.retry.initial_backoff", "1s")
 	v.SetDefault("processing.retry.max_backoff", "2m")
+}
 
+func setObservabilityDefaults(v *viper.Viper) {
 	// Observability configuration
 	v.SetDefault("observability.metrics_addr", ":9090")
 	v.SetDefault("observability.log.level", "info")
 	v.SetDefault("observability.log.format", "json")
+}
 
+func setTemplateDefaults(v *viper.Viper) {
 	// Global template configuration
 	v.SetDefault("templates.enabled", false)
 	v.SetDefault("templates.path", "")
@@ -952,10 +969,38 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("templates.watch_files", false)
 }
 
-func bindFlags(v *viper.Viper) {
+func setMessageFormatDefaults(v *viper.Viper, prefix string, maxLength int, disableWebPreview bool) {
+	v.SetDefault(prefix+".escape_markdown", true)
+	v.SetDefault(prefix+".disable_web_preview", disableWebPreview)
+	v.SetDefault(prefix+".enable_html", false)
+	v.SetDefault(prefix+".show_timestamp", true)
+	v.SetDefault(prefix+".include_severity", true)
+	v.SetDefault(prefix+".max_message_length", maxLength)
+	v.SetDefault(prefix+".custom_prefix", "")
+	v.SetDefault(prefix+".custom_suffix", "")
+
+	// Severity colors
+	v.SetDefault(prefix+".severity_colors.critical", "🔴")
+	v.SetDefault(prefix+".severity_colors.high", "🟠")
+	v.SetDefault(prefix+".severity_colors.medium", "🟡")
+	v.SetDefault(prefix+".severity_colors.low", "🟢")
+	v.SetDefault(prefix+".severity_colors.unknown", "⚪")
+}
+
+func setTemplateDefaultsForNotifier(v *viper.Viper, prefix string) {
+	v.SetDefault(prefix+".enabled", false)
+	v.SetDefault(prefix+".path", "")
+	v.SetDefault(prefix+".reload", false)
+	v.SetDefault(prefix+".watch_files", false)
+}
+
+func bindFlags(v *viper.Viper) error {
 	pflag.String("config", "/etc/notifier/config.yaml", "path to config file")
 	pflag.Parse()
-	v.BindPFlags(pflag.CommandLine)
+	if err := v.BindPFlags(pflag.CommandLine); err != nil {
+		return fmt.Errorf("failed to bind pflags: %w", err)
+	}
+	return nil
 }
 
 // Validate validates the configuration
@@ -1017,222 +1062,332 @@ func (c *Config) validateHarborConfig() error {
 
 	// Validate credentials
 	if c.Harbor.Username == "" {
-		return errors.New("Harbor username is required")
+		return errors.New("harbor username is required")
 	}
 
 	// Validate timeout
 	if c.Harbor.Timeout <= 0 {
-		return errors.New("Harbor timeout must be positive")
+		return errors.New("harbor timeout must be positive")
 	}
 
 	return nil
 }
 
 func (c *Config) validateNotifyConfig() error {
-	// Validate Telegram configuration
-	if c.Notify.Telegram.Enabled {
-		if c.Notify.Telegram.BotToken == "" {
-			return errors.New("Telegram bot token is required when Telegram is enabled")
-		}
-		if c.Notify.Telegram.ChatID == "" {
-			return errors.New("Telegram chat ID is required when Telegram is enabled")
-		}
-		if c.Notify.Telegram.RatePerMinute <= 0 {
-			return errors.New("Telegram rate per minute must be positive")
-		}
-		if c.Notify.Telegram.Timeout <= 0 {
-			return errors.New("Telegram timeout must be positive")
-		}
+	if err := c.validateTelegramConfig(); err != nil {
+		return err
+	}
+	if err := c.validateEmailConfig(); err != nil {
+		return err
+	}
+	if err := c.validateMattermostConfig(); err != nil {
+		return err
+	}
+	if err := c.validateSlackConfig(); err != nil {
+		return err
+	}
+	return nil
+}
 
-		// Validate webhook configuration
-		if c.Notify.Telegram.Webhook.Enabled {
-			if c.Notify.Telegram.Webhook.URL == "" {
-				return errors.New("Telegram webhook URL is required when webhook is enabled")
-			}
-			if c.Notify.Telegram.Webhook.MaxConnections <= 0 {
-				return errors.New("Telegram webhook max connections must be positive")
-			}
-			if c.Notify.Telegram.Webhook.MaxConnections > 100 {
-				return errors.New("Telegram webhook max connections cannot exceed 100")
-			}
-		}
-
-		// Validate message format configuration
-		if c.Notify.Telegram.MessageFormat.MaxMessageLength <= 0 {
-			return errors.New("Telegram message format max message length must be positive")
-		}
-		if c.Notify.Telegram.MessageFormat.MaxMessageLength > 4096 {
-			return errors.New("Telegram message format max message length cannot exceed 4096 characters")
-		}
-
-		// Validate severity colors
-		if c.Notify.Telegram.MessageFormat.SeverityColors.Critical == "" {
-			return errors.New("Telegram severity color for critical issues is required")
-		}
-		if c.Notify.Telegram.MessageFormat.SeverityColors.High == "" {
-			return errors.New("Telegram severity color for high issues is required")
-		}
-		if c.Notify.Telegram.MessageFormat.SeverityColors.Medium == "" {
-			return errors.New("Telegram severity color for medium issues is required")
-		}
-		if c.Notify.Telegram.MessageFormat.SeverityColors.Low == "" {
-			return errors.New("Telegram severity color for low issues is required")
-		}
+// validateTelegramConfig validates Telegram notification configuration
+func (c *Config) validateTelegramConfig() error {
+	if !c.Notify.Telegram.Enabled {
+		return nil
 	}
 
-	// Validate email configuration
-	if c.Notify.Email.Enabled {
-		if c.Notify.Email.SMTP.Host == "" {
-			return errors.New("SMTP host is required when email is enabled")
-		}
-		if c.Notify.Email.SMTP.Port <= 0 || c.Notify.Email.SMTP.Port > 65535 {
-			return errors.New("SMTP port must be between 1 and 65535")
-		}
-		if c.Notify.Email.SMTP.Username == "" {
-			return errors.New("SMTP username is required when email is enabled")
-		}
-		if c.Notify.Email.SMTP.From == "" {
-			return errors.New("SMTP from address is required when email is enabled")
-		}
-		if len(c.Notify.Email.To) == 0 {
-			return errors.New("at least one email recipient is required when email is enabled")
-		}
-
-		// Validate auth type
-		validAuthTypes := map[string]bool{
-			"plain":         true,
-			"login":         true,
-			"plain-noenc":   true,
-			"login-noenc":   true,
-			"crammd5":       true,
-			"scram":         true,
-			"scram-sha-1":   true,
-			"scram-sha1":    true,
-			"scramsha1":     true,
-			"scram-sha-256": true,
-			"scram-sha256":  true,
-			"scramsha256":   true,
-			"xoauth2":       true,
-			"oauth2":        true,
-			"auto":          true,
-			"autodiscover":  true,
-			"none":          true,
-			"noauth":        true,
-		}
-		if !validAuthTypes[c.Notify.Email.SMTP.AuthType] {
-			return errors.New("invalid SMTP auth type, must be one of: plain, login, plain-noenc, login-noenc, crammd5, scram, scram-sha-1, scram-sha-256, xoauth2, auto, none")
-		}
-
-		// Validate encryption type
-		validEncryptionTypes := map[string]bool{
-			"none": true,
-			"ssl":  true,
-			"tls":  true,
-		}
-		if !validEncryptionTypes[c.Notify.Email.SMTP.Encryption] {
-			return errors.New("invalid SMTP encryption type, must be one of: none, ssl, tls")
-		}
-
-		// Validate timeout
-		if c.Notify.Email.SMTP.Timeout <= 0 {
-			return errors.New("SMTP timeout must be positive")
-		}
+	if c.Notify.Telegram.BotToken == "" {
+		return errors.New("telegram bot token is required when telegram is enabled")
+	}
+	if c.Notify.Telegram.ChatID == "" {
+		return errors.New("telegram chat ID is required when telegram is enabled")
+	}
+	if c.Notify.Telegram.RatePerMinute <= 0 {
+		return errors.New("telegram rate per minute must be positive")
+	}
+	if c.Notify.Telegram.Timeout <= 0 {
+		return errors.New("telegram timeout must be positive")
 	}
 
-	// Validate Mattermost configuration
-	if c.Notify.Mattermost.Enabled {
-		if c.Notify.Mattermost.ServerURL == "" {
-			return errors.New("Mattermost server URL is required when Mattermost is enabled")
-		}
-		if c.Notify.Mattermost.Token == "" {
-			return errors.New("Mattermost token is required when Mattermost is enabled")
-		}
-		if c.Notify.Mattermost.Channel == "" {
-			return errors.New("Mattermost channel is required when Mattermost is enabled")
-		}
-		if c.Notify.Mattermost.RatePerMinute <= 0 {
-			return errors.New("Mattermost rate per minute must be positive")
-		}
-		if c.Notify.Mattermost.Timeout <= 0 {
-			return errors.New("Mattermost timeout must be positive")
-		}
-
-		// Validate server URL format
-		if _, err := url.Parse(c.Notify.Mattermost.ServerURL); err != nil {
-			return errors.New("invalid Mattermost server URL format")
-		}
-
-		// Validate channel type
-		validChannelTypes := map[string]bool{
-			"public":  true,
-			"private": true,
-			"direct":  true,
-		}
-		if !validChannelTypes[c.Notify.Mattermost.ChannelType] {
-			return errors.New("invalid Mattermost channel type, must be one of: public, private, direct")
-		}
-
-		// Validate message format configuration
-		if c.Notify.Mattermost.MessageFormat.MaxMessageLength <= 0 {
-			return errors.New("Mattermost message format max message length must be positive")
-		}
-		if c.Notify.Mattermost.MessageFormat.MaxMessageLength > 4000 {
-			return errors.New("Mattermost message format max message length cannot exceed 4000 characters")
-		}
-
-		// Validate severity colors
-		if c.Notify.Mattermost.MessageFormat.SeverityColors.Critical == "" {
-			return errors.New("Mattermost severity color for critical issues is required")
-		}
-		if c.Notify.Mattermost.MessageFormat.SeverityColors.High == "" {
-			return errors.New("Mattermost severity color for high issues is required")
-		}
-		if c.Notify.Mattermost.MessageFormat.SeverityColors.Medium == "" {
-			return errors.New("Mattermost severity color for medium issues is required")
-		}
-		if c.Notify.Mattermost.MessageFormat.SeverityColors.Low == "" {
-			return errors.New("Mattermost severity color for low issues is required")
-		}
+	if err := c.validateTelegramWebhookConfig(); err != nil {
+		return err
+	}
+	if err := c.validateTelegramMessageFormat(); err != nil {
+		return err
+	}
+	if err := c.validateTelegramSeverityColors(); err != nil {
+		return err
 	}
 
-	// Validate Slack configuration
-	if c.Notify.Slack.Enabled {
-		if c.Notify.Slack.Token == "" {
-			return errors.New("Slack token is required when Slack is enabled")
-		}
-		if c.Notify.Slack.Channel == "" {
-			return errors.New("Slack channel is required when Slack is enabled")
-		}
-		if c.Notify.Slack.RatePerMinute <= 0 {
-			return errors.New("Slack rate per minute must be positive")
-		}
-		if c.Notify.Slack.Timeout <= 0 {
-			return errors.New("Slack timeout must be positive")
-		}
+	return nil
+}
 
-		// Validate message format configuration
-		if c.Notify.Slack.MessageFormat.MaxMessageLength <= 0 {
-			return errors.New("Slack message format max message length must be positive")
-		}
-		if c.Notify.Slack.MessageFormat.MaxMessageLength > 4000 {
-			return errors.New("Slack message format max message length cannot exceed 4000 characters")
-		}
-
-		// Validate severity colors
-		if c.Notify.Slack.MessageFormat.SeverityColors.Critical == "" {
-			return errors.New("Slack severity color for critical issues is required")
-		}
-		if c.Notify.Slack.MessageFormat.SeverityColors.High == "" {
-			return errors.New("Slack severity color for high issues is required")
-		}
-		if c.Notify.Slack.MessageFormat.SeverityColors.Medium == "" {
-			return errors.New("Slack severity color for medium issues is required")
-		}
-		if c.Notify.Slack.MessageFormat.SeverityColors.Low == "" {
-			return errors.New("Slack severity color for low issues is required")
-		}
+// validateTelegramWebhookConfig validates Telegram webhook configuration
+func (c *Config) validateTelegramWebhookConfig() error {
+	if !c.Notify.Telegram.Webhook.Enabled {
+		return nil
 	}
 
+	if c.Notify.Telegram.Webhook.URL == "" {
+		return errors.New("telegram webhook URL is required when webhook is enabled")
+	}
+	if c.Notify.Telegram.Webhook.MaxConnections <= 0 {
+		return errors.New("telegram webhook max connections must be positive")
+	}
+	if c.Notify.Telegram.Webhook.MaxConnections > defaultWebhookMaxConnLimit {
+		return fmt.Errorf("telegram webhook max connections cannot exceed %d", defaultWebhookMaxConnLimit)
+	}
+
+	return nil
+}
+
+// validateTelegramMessageFormat validates Telegram message format configuration
+func (c *Config) validateTelegramMessageFormat() error {
+	if c.Notify.Telegram.MessageFormat.MaxMessageLength <= 0 {
+		return errors.New("telegram message format max message length must be positive")
+	}
+	if c.Notify.Telegram.MessageFormat.MaxMessageLength > defaultTelegramMaxMsgLength {
+		return fmt.Errorf(
+			"telegram message format max message length cannot exceed %d characters",
+			defaultTelegramMaxMsgLength)
+	}
+	return nil
+}
+
+// validateTelegramSeverityColors validates Telegram severity colors
+func (c *Config) validateTelegramSeverityColors() error {
+	colors := c.Notify.Telegram.MessageFormat.SeverityColors
+	if colors.Critical == "" {
+		return errors.New("telegram severity color for critical issues is required")
+	}
+	if colors.High == "" {
+		return errors.New("telegram severity color for high issues is required")
+	}
+	if colors.Medium == "" {
+		return errors.New("telegram severity color for medium issues is required")
+	}
+	if colors.Low == "" {
+		return errors.New("telegram severity color for low issues is required")
+	}
+	return nil
+}
+
+// validateEmailConfig validates email notification configuration
+func (c *Config) validateEmailConfig() error {
+	if !c.Notify.Email.Enabled {
+		return nil
+	}
+
+	if c.Notify.Email.SMTP.Host == "" {
+		return errors.New("SMTP host is required when email is enabled")
+	}
+	if c.Notify.Email.SMTP.Port <= 0 || c.Notify.Email.SMTP.Port > 65535 {
+		return errors.New("SMTP port must be between 1 and 65535")
+	}
+	if c.Notify.Email.SMTP.Username == "" {
+		return errors.New("SMTP username is required when email is enabled")
+	}
+	if c.Notify.Email.SMTP.From == "" {
+		return errors.New("SMTP from address is required when email is enabled")
+	}
+	if len(c.Notify.Email.To) == 0 {
+		return errors.New("at least one email recipient is required when email is enabled")
+	}
+
+	if err := c.validateSMTPAuthType(); err != nil {
+		return err
+	}
+	if err := c.validateSMTPEncryption(); err != nil {
+		return err
+	}
+
+	if c.Notify.Email.SMTP.Timeout <= 0 {
+		return errors.New("SMTP timeout must be positive")
+	}
+
+	return nil
+}
+
+// validateSMTPAuthType validates SMTP authentication type
+func (c *Config) validateSMTPAuthType() error {
+	validAuthTypes := map[string]bool{
+		"plain":         true,
+		"login":         true,
+		"plain-noenc":   true,
+		"login-noenc":   true,
+		"crammd5":       true,
+		"scram":         true,
+		"scram-sha-1":   true,
+		"scram-sha1":    true,
+		"scramsha1":     true,
+		"scram-sha-256": true,
+		"scram-sha256":  true,
+		"scramsha256":   true,
+		"xoauth2":       true,
+		"oauth2":        true,
+		"auto":          true,
+		"autodiscover":  true,
+		"none":          true,
+		"noauth":        true,
+	}
+	if !validAuthTypes[c.Notify.Email.SMTP.AuthType] {
+		return errors.New(
+			"invalid SMTP auth type, must be one of: plain, login, plain-noenc, " +
+				"login-noenc, crammd5, scram, scram-sha-1, scram-sha-256, xoauth2, auto, none")
+	}
+	return nil
+}
+
+// validateSMTPEncryption validates SMTP encryption type
+func (c *Config) validateSMTPEncryption() error {
+	validEncryptionTypes := map[string]bool{
+		"none": true,
+		"ssl":  true,
+		"tls":  true,
+	}
+	if !validEncryptionTypes[c.Notify.Email.SMTP.Encryption] {
+		return errors.New("invalid SMTP encryption type, must be one of: none, ssl, tls")
+	}
+	return nil
+}
+
+// validateMattermostConfig validates Mattermost notification configuration
+func (c *Config) validateMattermostConfig() error {
+	if !c.Notify.Mattermost.Enabled {
+		return nil
+	}
+
+	if c.Notify.Mattermost.ServerURL == "" {
+		return errors.New("mattermost server URL is required when mattermost is enabled")
+	}
+	if c.Notify.Mattermost.Token == "" {
+		return errors.New("mattermost token is required when mattermost is enabled")
+	}
+	if c.Notify.Mattermost.Channel == "" {
+		return errors.New("mattermost channel is required when mattermost is enabled")
+	}
+	if c.Notify.Mattermost.RatePerMinute <= 0 {
+		return errors.New("mattermost rate per minute must be positive")
+	}
+	if c.Notify.Mattermost.Timeout <= 0 {
+		return errors.New("mattermost timeout must be positive")
+	}
+
+	if _, err := url.Parse(c.Notify.Mattermost.ServerURL); err != nil {
+		return errors.New("invalid Mattermost server URL format")
+	}
+
+	if err := c.validateMattermostChannelType(); err != nil {
+		return err
+	}
+	if err := c.validateMattermostMessageFormat(); err != nil {
+		return err
+	}
+	if err := c.validateMattermostSeverityColors(); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// validateMattermostChannelType validates Mattermost channel type
+func (c *Config) validateMattermostChannelType() error {
+	validChannelTypes := map[string]bool{
+		"public":  true,
+		"private": true,
+		"direct":  true,
+	}
+	if !validChannelTypes[c.Notify.Mattermost.ChannelType] {
+		return errors.New("invalid Mattermost channel type, must be one of: public, private, direct")
+	}
+	return nil
+}
+
+// validateMattermostMessageFormat validates Mattermost message format configuration
+func (c *Config) validateMattermostMessageFormat() error {
+	if c.Notify.Mattermost.MessageFormat.MaxMessageLength <= 0 {
+		return errors.New("mattermost message format max message length must be positive")
+	}
+	if c.Notify.Mattermost.MessageFormat.MaxMessageLength > defaultMattermostMaxMsgLength {
+		return fmt.Errorf(
+			"mattermost message format max message length cannot exceed %d characters",
+			defaultMattermostMaxMsgLength)
+	}
+	return nil
+}
+
+// validateMattermostSeverityColors validates Mattermost severity colors
+func (c *Config) validateMattermostSeverityColors() error {
+	colors := c.Notify.Mattermost.MessageFormat.SeverityColors
+	if colors.Critical == "" {
+		return errors.New("mattermost severity color for critical issues is required")
+	}
+	if colors.High == "" {
+		return errors.New("mattermost severity color for high issues is required")
+	}
+	if colors.Medium == "" {
+		return errors.New("mattermost severity color for medium issues is required")
+	}
+	if colors.Low == "" {
+		return errors.New("mattermost severity color for low issues is required")
+	}
+	return nil
+}
+
+// validateSlackConfig validates Slack notification configuration
+func (c *Config) validateSlackConfig() error {
+	if !c.Notify.Slack.Enabled {
+		return nil
+	}
+
+	if c.Notify.Slack.Token == "" {
+		return errors.New("slack token is required when slack is enabled")
+	}
+	if c.Notify.Slack.Channel == "" {
+		return errors.New("slack channel is required when slack is enabled")
+	}
+	if c.Notify.Slack.RatePerMinute <= 0 {
+		return errors.New("slack rate per minute must be positive")
+	}
+	if c.Notify.Slack.Timeout <= 0 {
+		return errors.New("slack timeout must be positive")
+	}
+
+	if err := c.validateSlackMessageFormat(); err != nil {
+		return err
+	}
+	if err := c.validateSlackSeverityColors(); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// validateSlackMessageFormat validates Slack message format configuration
+func (c *Config) validateSlackMessageFormat() error {
+	if c.Notify.Slack.MessageFormat.MaxMessageLength <= 0 {
+		return errors.New("slack message format max message length must be positive")
+	}
+	if c.Notify.Slack.MessageFormat.MaxMessageLength > defaultSlackMaxMsgLength {
+		return fmt.Errorf("slack message format max message length cannot exceed %d characters", defaultSlackMaxMsgLength)
+	}
+	return nil
+}
+
+// validateSlackSeverityColors validates Slack severity colors
+func (c *Config) validateSlackSeverityColors() error {
+	colors := c.Notify.Slack.MessageFormat.SeverityColors
+	if colors.Critical == "" {
+		return errors.New("slack severity color for critical issues is required")
+	}
+	if colors.High == "" {
+		return errors.New("slack severity color for high issues is required")
+	}
+	if colors.Medium == "" {
+		return errors.New("slack severity color for medium issues is required")
+	}
+	if colors.Low == "" {
+		return errors.New("slack severity color for low issues is required")
+	}
 	return nil
 }
 

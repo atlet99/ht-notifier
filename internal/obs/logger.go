@@ -1,3 +1,4 @@
+// Package obs provides observability functionality including logging and metrics.
 package obs
 
 import (
@@ -12,6 +13,13 @@ import (
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"gopkg.in/natefinch/lumberjack.v2"
+)
+
+const (
+	defaultLogMaxSize    = 100 // MB
+	defaultLogMaxBackups = 3
+	defaultLogMaxAge     = 30 // days
+	requestIDLength      = 8
 )
 
 // LoggerConfig holds configuration for the logger
@@ -33,17 +41,17 @@ func DefaultLoggerConfig() LoggerConfig {
 		Format:     "json",
 		Output:     "stdout",
 		FilePath:   "/var/log/ht-notifier/app.log",
-		MaxSize:    100,
-		MaxBackups: 3,
-		MaxAge:     30,
+		MaxSize:    defaultLogMaxSize,
+		MaxBackups: defaultLogMaxBackups,
+		MaxAge:     defaultLogMaxAge,
 		Compress:   true,
 	}
 }
 
 // NewLogger creates a new logger with the given configuration
-func NewLogger(config LoggerConfig) (*zap.Logger, error) {
+func NewLogger(config *LoggerConfig) (*zap.Logger, error) {
 	// Convert log level to zap level
-	zapLevel := zapcore.InfoLevel
+	var zapLevel zapcore.Level
 	switch config.Level {
 	case "debug":
 		zapLevel = zapcore.DebugLevel
@@ -126,7 +134,8 @@ func NewContextLogger(logger *zap.Logger) *ContextLogger {
 
 // WithRequestID adds request ID to logger context
 func (cl *ContextLogger) WithRequestID(ctx context.Context) *zap.Logger {
-	if requestID, ok := ctx.Value("requestID").(string); ok {
+	type requestIDKey struct{}
+	if requestID, ok := ctx.Value(requestIDKey{}).(string); ok {
 		return cl.logger.With(zap.String("request_id", requestID))
 	}
 	return cl.logger
@@ -175,7 +184,8 @@ func RequestIDMiddleware(next http.Handler) http.Handler {
 			requestID = generateRequestID()
 		}
 
-		ctx := context.WithValue(r.Context(), "requestID", requestID)
+		type requestIDKey struct{}
+		ctx := context.WithValue(r.Context(), requestIDKey{}, requestID)
 		w.Header().Set("X-Request-ID", requestID)
 
 		next.ServeHTTP(w, r.WithContext(ctx))
@@ -184,7 +194,7 @@ func RequestIDMiddleware(next http.Handler) http.Handler {
 
 // generateRequestID generates a unique request ID
 func generateRequestID() string {
-	return time.Now().Format("20060102150405") + "-" + randomString(8)
+	return time.Now().Format("20060102150405") + "-" + randomString(requestIDLength)
 }
 
 // randomString generates a random string of given length
@@ -224,8 +234,9 @@ func LoggingMiddleware(logger *zap.Logger) func(http.Handler) http.Handler {
 			wrapped := &responseWriterWrapper{ResponseWriter: w, statusCode: http.StatusOK}
 
 			// Get request ID from context
+			type requestIDKey struct{}
 			requestID := ""
-			if ctxID := r.Context().Value("requestID"); ctxID != nil {
+			if ctxID := r.Context().Value(requestIDKey{}); ctxID != nil {
 				requestID = ctxID.(string)
 			}
 

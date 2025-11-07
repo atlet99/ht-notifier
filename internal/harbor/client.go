@@ -1,3 +1,4 @@
+// Package harbor provides Harbor API client functionality.
 package harbor
 
 import (
@@ -11,6 +12,7 @@ import (
 	"net/url"
 
 	"go.uber.org/zap"
+
 	"github.com/atlet99/ht-notifier/internal/config"
 )
 
@@ -37,6 +39,7 @@ func NewClient(cfg config.HarborConfig, httpClient *http.Client, logger *zap.Log
 			Timeout: cfg.Timeout,
 			Transport: &http.Transport{
 				TLSClientConfig: &tls.Config{
+					// #nosec G402 -- InsecureSkipVerify is configurable and may be needed for self-signed certs
 					InsecureSkipVerify: cfg.InsecureSkipVerify,
 				},
 			},
@@ -61,8 +64,14 @@ type Event struct {
 }
 
 // GetArtifactOverview retrieves detailed scan overview for an artifact
-func (c *Client) GetArtifactOverview(ctx context.Context, projectID int, repository, reference string) (*ArtifactOverview, error) {
-	path := fmt.Sprintf("/api/v2.0/projects/%d/repositories/%s/artifacts/%s/scan/overview", projectID, repository, reference)
+func (c *Client) GetArtifactOverview(
+	ctx context.Context,
+	projectID int,
+	repository, reference string,
+) (*ArtifactOverview, error) {
+	path := fmt.Sprintf(
+		"/api/v2.0/projects/%d/repositories/%s/artifacts/%s/scan/overview",
+		projectID, repository, reference)
 
 	req, err := c.newRequest(ctx, "GET", path, nil)
 	if err != nil {
@@ -132,9 +141,9 @@ func (c *Client) newRequest(ctx context.Context, method, path string, body inter
 	var buf io.ReadWriter
 	if body != nil {
 		buf = &bytes.Buffer{}
-		err := json.NewEncoder(buf).Encode(body)
-		if err != nil {
-			return nil, err
+		encodeErr := json.NewEncoder(buf).Encode(body)
+		if encodeErr != nil {
+			return nil, encodeErr
 		}
 	}
 

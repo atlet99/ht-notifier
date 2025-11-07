@@ -11,6 +11,13 @@ import (
 	"go.uber.org/zap"
 )
 
+const (
+	exponentialBucketsStart = 100
+	exponentialBucketsBase  = 10
+	exponentialBucketsCount = 7
+	httpStatusServerError   = 500
+)
+
 // Metrics holds all Prometheus metrics for the application
 type Metrics struct {
 	// HTTP server metrics
@@ -60,216 +67,15 @@ func NewMetrics(registry prometheus.Registerer, namespace string) *Metrics {
 		registry = prometheus.DefaultRegisterer
 	}
 
-	m := &Metrics{
-		// HTTP server metrics
-		HTTPRequestTotal: promauto.With(registry).NewCounterVec(
-			prometheus.CounterOpts{
-				Namespace: namespace,
-				Name:      "http_requests_total",
-				Help:      "Total number of HTTP requests",
-			},
-			[]string{"method", "endpoint", "status_code"},
-		),
-		HTTPRequestDuration: promauto.With(registry).NewHistogramVec(
-			prometheus.HistogramOpts{
-				Namespace: namespace,
-				Name:      "http_request_duration_seconds",
-				Help:      "HTTP request duration in seconds",
-				Buckets:   prometheus.DefBuckets,
-			},
-			[]string{"method", "endpoint"},
-		),
-		HTTPResponseSizeBytes: promauto.With(registry).NewHistogramVec(
-			prometheus.HistogramOpts{
-				Namespace: namespace,
-				Name:      "http_response_size_bytes",
-				Help:      "HTTP response size in bytes",
-				Buckets:   prometheus.ExponentialBuckets(100, 10, 7),
-			},
-			[]string{"method", "endpoint"},
-		),
-
-		// Harbor webhook metrics
-		HarborEventsTotal: promauto.With(registry).NewCounterVec(
-			prometheus.CounterOpts{
-				Namespace: namespace,
-				Name:      "harbor_events_total",
-				Help:      "Total number of Harbor webhook events received",
-			},
-			[]string{"event_type", "status"},
-		),
-		HarborEventProcessingDuration: promauto.With(registry).NewHistogramVec(
-			prometheus.HistogramOpts{
-				Namespace: namespace,
-				Name:      "harbor_event_processing_duration_seconds",
-				Help:      "Harbor event processing duration in seconds",
-				Buckets:   prometheus.DefBuckets,
-			},
-			[]string{"event_type"},
-		),
-		HarborAPIErrorsTotal: promauto.With(registry).NewCounterVec(
-			prometheus.CounterOpts{
-				Namespace: namespace,
-				Name:      "harbor_api_errors_total",
-				Help:      "Total number of Harbor API errors",
-			},
-			[]string{"endpoint", "status_code"},
-		),
-
-		// Notification metrics
-		NotificationsSentTotal: promauto.With(registry).NewCounterVec(
-			prometheus.CounterOpts{
-				Namespace: namespace,
-				Name:      "notifications_sent_total",
-				Help:      "Total number of notifications sent",
-			},
-			[]string{"target", "status"},
-		),
-		NotificationsFailedTotal: promauto.With(registry).NewCounterVec(
-			prometheus.CounterOpts{
-				Namespace: namespace,
-				Name:      "notifications_failed_total",
-				Help:      "Total number of failed notifications",
-			},
-			[]string{"target", "error_type"},
-		),
-		NotificationDuration: promauto.With(registry).NewHistogramVec(
-			prometheus.HistogramOpts{
-				Namespace: namespace,
-				Name:      "notification_duration_seconds",
-				Help:      "Notification sending duration in seconds",
-				Buckets:   prometheus.DefBuckets,
-			},
-			[]string{"target"},
-		),
-
-		// Per-notifier metrics
-		NotifierSentTotal: promauto.With(registry).NewCounterVec(
-			prometheus.CounterOpts{
-				Namespace: namespace,
-				Name:      "notifier_sent_total",
-				Help:      "Total number of notifications sent by each notifier",
-			},
-			[]string{"notifier"},
-		),
-		NotifierFailedTotal: promauto.With(registry).NewCounterVec(
-			prometheus.CounterOpts{
-				Namespace: namespace,
-				Name:      "notifier_failed_total",
-				Help:      "Total number of failed notifications by each notifier",
-			},
-			[]string{"notifier"},
-		),
-		NotifierDuration: promauto.With(registry).NewHistogramVec(
-			prometheus.HistogramOpts{
-				Namespace: namespace,
-				Name:      "notifier_duration_seconds",
-				Help:      "Notification sending duration by each notifier in seconds",
-				Buckets:   prometheus.DefBuckets,
-			},
-			[]string{"notifier"},
-		),
-		NotifierLastSuccessTime: promauto.With(registry).NewGaugeVec(
-			prometheus.GaugeOpts{
-				Namespace: namespace,
-				Name:      "notifier_last_success_timestamp_seconds",
-				Help:      "Unix timestamp of the last successful notification for each notifier",
-			},
-			[]string{"notifier"},
-		),
-		NotifierLastFailureTime: promauto.With(registry).NewGaugeVec(
-			prometheus.GaugeOpts{
-				Namespace: namespace,
-				Name:      "notifier_last_failure_timestamp_seconds",
-				Help:      "Unix timestamp of the last failed notification for each notifier",
-			},
-			[]string{"notifier"},
-		),
-
-		// Processing metrics
-		ProcessedEventsTotal: promauto.With(registry).NewCounterVec(
-			prometheus.CounterOpts{
-				Namespace: namespace,
-				Name:      "processed_events_total",
-				Help:      "Total number of processed events",
-			},
-			[]string{"status"},
-		),
-		ProcessingErrorsTotal: promauto.With(registry).NewCounterVec(
-			prometheus.CounterOpts{
-				Namespace: namespace,
-				Name:      "processing_errors_total",
-				Help:      "Total number of processing errors",
-			},
-			[]string{"error_type"},
-		),
-		ProcessingDurationHistogram: promauto.With(registry).NewHistogramVec(
-			prometheus.HistogramOpts{
-				Namespace: namespace,
-				Name:      "processing_duration_seconds",
-				Help:      "Event processing duration in seconds",
-				Buckets:   prometheus.DefBuckets,
-			},
-			[]string{"event_type"},
-		),
-
-		// Queue metrics
-		QueueDepthGauge: promauto.With(registry).NewGauge(
-			prometheus.GaugeOpts{
-				Namespace: namespace,
-				Name:      "queue_depth",
-				Help:      "Current number of events in the processing queue",
-			},
-		),
-		QueueErrorsTotal: promauto.With(registry).NewCounterVec(
-			prometheus.CounterOpts{
-				Namespace: namespace,
-				Name:      "queue_errors_total",
-				Help:      "Total number of queue errors",
-			},
-			[]string{"error_type"},
-		),
-
-		// Worker metrics
-		WorkerBusyGauge: promauto.With(registry).NewGauge(
-			prometheus.GaugeOpts{
-				Namespace: namespace,
-				Name:      "worker_busy",
-				Help:      "Current number of busy workers",
-			},
-		),
-		WorkerErrorsTotal: promauto.With(registry).NewCounterVec(
-			prometheus.CounterOpts{
-				Namespace: namespace,
-				Name:      "worker_errors_total",
-				Help:      "Total number of worker errors",
-			},
-			[]string{"worker_id", "error_type"},
-		),
-
-		// System metrics
-		SystemUptimeGauge: promauto.With(registry).NewGauge(
-			prometheus.GaugeOpts{
-				Namespace: namespace,
-				Name:      "system_uptime_seconds",
-				Help:      "System uptime in seconds",
-			},
-		),
-		SystemMemoryUsage: promauto.With(registry).NewGauge(
-			prometheus.GaugeOpts{
-				Namespace: namespace,
-				Name:      "system_memory_usage_bytes",
-				Help:      "Current memory usage in bytes",
-			},
-		),
-		SystemCPUUsage: promauto.With(registry).NewGauge(
-			prometheus.GaugeOpts{
-				Namespace: namespace,
-				Name:      "system_cpu_usage_percent",
-				Help:      "Current CPU usage percentage",
-			},
-		),
-	}
+	m := &Metrics{}
+	createHTTPMetrics(m, registry, namespace)
+	createHarborMetrics(m, registry, namespace)
+	createNotificationMetrics(m, registry, namespace)
+	createNotifierMetrics(m, registry, namespace)
+	createProcessingMetrics(m, registry, namespace)
+	createQueueMetrics(m, registry, namespace)
+	createWorkerMetrics(m, registry, namespace)
+	createSystemMetrics(m, registry, namespace)
 
 	// Initialize system metrics
 	m.SystemUptimeGauge.Set(0)
@@ -277,8 +83,230 @@ func NewMetrics(registry prometheus.Registerer, namespace string) *Metrics {
 	return m
 }
 
+func createHTTPMetrics(m *Metrics, registry prometheus.Registerer, namespace string) {
+	m.HTTPRequestTotal = promauto.With(registry).NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: namespace,
+			Name:      "http_requests_total",
+			Help:      "Total number of HTTP requests",
+		},
+		[]string{"method", "endpoint", "status_code"},
+	)
+	m.HTTPRequestDuration = promauto.With(registry).NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: namespace,
+			Name:      "http_request_duration_seconds",
+			Help:      "HTTP request duration in seconds",
+			Buckets:   prometheus.DefBuckets,
+		},
+		[]string{"method", "endpoint"},
+	)
+	m.HTTPResponseSizeBytes = promauto.With(registry).NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: namespace,
+			Name:      "http_response_size_bytes",
+			Help:      "HTTP response size in bytes",
+			Buckets:   prometheus.ExponentialBuckets(exponentialBucketsStart, exponentialBucketsBase, exponentialBucketsCount),
+		},
+		[]string{"method", "endpoint"},
+	)
+}
+
+func createHarborMetrics(m *Metrics, registry prometheus.Registerer, namespace string) {
+	m.HarborEventsTotal = promauto.With(registry).NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: namespace,
+			Name:      "harbor_events_total",
+			Help:      "Total number of Harbor webhook events received",
+		},
+		[]string{"event_type", "status"},
+	)
+	m.HarborEventProcessingDuration = promauto.With(registry).NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: namespace,
+			Name:      "harbor_event_processing_duration_seconds",
+			Help:      "Harbor event processing duration in seconds",
+			Buckets:   prometheus.DefBuckets,
+		},
+		[]string{"event_type"},
+	)
+	m.HarborAPIErrorsTotal = promauto.With(registry).NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: namespace,
+			Name:      "harbor_api_errors_total",
+			Help:      "Total number of Harbor API errors",
+		},
+		[]string{"endpoint", "status_code"},
+	)
+}
+
+func createNotificationMetrics(m *Metrics, registry prometheus.Registerer, namespace string) {
+	m.NotificationsSentTotal = promauto.With(registry).NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: namespace,
+			Name:      "notifications_sent_total",
+			Help:      "Total number of notifications sent",
+		},
+		[]string{"target", "status"},
+	)
+	m.NotificationsFailedTotal = promauto.With(registry).NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: namespace,
+			Name:      "notifications_failed_total",
+			Help:      "Total number of failed notifications",
+		},
+		[]string{"target", "error_type"},
+	)
+	m.NotificationDuration = promauto.With(registry).NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: namespace,
+			Name:      "notification_duration_seconds",
+			Help:      "Notification sending duration in seconds",
+			Buckets:   prometheus.DefBuckets,
+		},
+		[]string{"target"},
+	)
+}
+
+func createNotifierMetrics(m *Metrics, registry prometheus.Registerer, namespace string) {
+	m.NotifierSentTotal = promauto.With(registry).NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: namespace,
+			Name:      "notifier_sent_total",
+			Help:      "Total number of notifications sent by each notifier",
+		},
+		[]string{"notifier"},
+	)
+	m.NotifierFailedTotal = promauto.With(registry).NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: namespace,
+			Name:      "notifier_failed_total",
+			Help:      "Total number of failed notifications by each notifier",
+		},
+		[]string{"notifier"},
+	)
+	m.NotifierDuration = promauto.With(registry).NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: namespace,
+			Name:      "notifier_duration_seconds",
+			Help:      "Notification sending duration by each notifier in seconds",
+			Buckets:   prometheus.DefBuckets,
+		},
+		[]string{"notifier"},
+	)
+	m.NotifierLastSuccessTime = promauto.With(registry).NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: namespace,
+			Name:      "notifier_last_success_timestamp_seconds",
+			Help:      "Unix timestamp of the last successful notification for each notifier",
+		},
+		[]string{"notifier"},
+	)
+	m.NotifierLastFailureTime = promauto.With(registry).NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: namespace,
+			Name:      "notifier_last_failure_timestamp_seconds",
+			Help:      "Unix timestamp of the last failed notification for each notifier",
+		},
+		[]string{"notifier"},
+	)
+}
+
+func createProcessingMetrics(m *Metrics, registry prometheus.Registerer, namespace string) {
+	m.ProcessedEventsTotal = promauto.With(registry).NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: namespace,
+			Name:      "processed_events_total",
+			Help:      "Total number of processed events",
+		},
+		[]string{"status"},
+	)
+	m.ProcessingErrorsTotal = promauto.With(registry).NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: namespace,
+			Name:      "processing_errors_total",
+			Help:      "Total number of processing errors",
+		},
+		[]string{"error_type"},
+	)
+	m.ProcessingDurationHistogram = promauto.With(registry).NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: namespace,
+			Name:      "processing_duration_seconds",
+			Help:      "Event processing duration in seconds",
+			Buckets:   prometheus.DefBuckets,
+		},
+		[]string{"event_type"},
+	)
+}
+
+func createQueueMetrics(m *Metrics, registry prometheus.Registerer, namespace string) {
+	m.QueueDepthGauge = promauto.With(registry).NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: namespace,
+			Name:      "queue_depth",
+			Help:      "Current number of events in the processing queue",
+		},
+	)
+	m.QueueErrorsTotal = promauto.With(registry).NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: namespace,
+			Name:      "queue_errors_total",
+			Help:      "Total number of queue errors",
+		},
+		[]string{"error_type"},
+	)
+}
+
+func createWorkerMetrics(m *Metrics, registry prometheus.Registerer, namespace string) {
+	m.WorkerBusyGauge = promauto.With(registry).NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: namespace,
+			Name:      "worker_busy",
+			Help:      "Current number of busy workers",
+		},
+	)
+	m.WorkerErrorsTotal = promauto.With(registry).NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: namespace,
+			Name:      "worker_errors_total",
+			Help:      "Total number of worker errors",
+		},
+		[]string{"worker_id", "error_type"},
+	)
+}
+
+func createSystemMetrics(m *Metrics, registry prometheus.Registerer, namespace string) {
+	m.SystemUptimeGauge = promauto.With(registry).NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: namespace,
+			Name:      "system_uptime_seconds",
+			Help:      "System uptime in seconds",
+		},
+	)
+	m.SystemMemoryUsage = promauto.With(registry).NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: namespace,
+			Name:      "system_memory_usage_bytes",
+			Help:      "Current memory usage in bytes",
+		},
+	)
+	m.SystemCPUUsage = promauto.With(registry).NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: namespace,
+			Name:      "system_cpu_usage_percent",
+			Help:      "Current CPU usage percentage",
+		},
+	)
+}
+
 // RecordHTTPRequest records HTTP request metrics
-func (m *Metrics) RecordHTTPRequest(method, endpoint string, statusCode int, duration time.Duration, responseSize int64) {
+func (m *Metrics) RecordHTTPRequest(
+	method, endpoint string,
+	statusCode int,
+	duration time.Duration,
+	responseSize int64,
+) {
 	m.HTTPRequestTotal.WithLabelValues(method, endpoint, statusCodeToString(statusCode)).Inc()
 	m.HTTPRequestDuration.WithLabelValues(method, endpoint).Observe(duration.Seconds())
 	m.HTTPResponseSizeBytes.WithLabelValues(method, endpoint).Observe(float64(responseSize))
@@ -319,7 +347,7 @@ func (m *Metrics) RecordNotificationFailure(target, errorType string) {
 }
 
 // RecordNotifierMetrics records metrics from individual notifiers
-func (m *Metrics) RecordNotifierMetrics(notifierName string, metrics interface{}) {
+func (m *Metrics) RecordNotifierMetrics(_ string, _ interface{}) {
 	// This method can be used to record additional metrics from notifier implementations
 	// For now, it's a placeholder for future enhancement
 }
@@ -371,7 +399,7 @@ func statusCodeToString(statusCode int) string {
 		return "3xx"
 	case statusCode >= 400 && statusCode < 500:
 		return "4xx"
-	case statusCode >= 500:
+	case statusCode >= httpStatusServerError:
 		return "5xx"
 	default:
 		return "other"

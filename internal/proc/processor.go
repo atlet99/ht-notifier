@@ -1,3 +1,4 @@
+// Package proc provides event processing functionality.
 package proc
 
 import (
@@ -8,12 +9,19 @@ import (
 	"sync"
 	"time"
 
+	"go.uber.org/zap"
+
 	"github.com/atlet99/ht-notifier/internal/config"
 	"github.com/atlet99/ht-notifier/internal/errors"
 	"github.com/atlet99/ht-notifier/internal/harbor"
 	"github.com/atlet99/ht-notifier/internal/notif"
 	"github.com/atlet99/ht-notifier/internal/obs"
-	"go.uber.org/zap"
+)
+
+const (
+	jitterRangeMin   = -0.25
+	jitterRangeMax   = 0.25
+	jitterMultiplier = 0.5
 )
 
 // HarborEventProcessor processes Harbor webhook events
@@ -28,14 +36,18 @@ type HarborEventProcessor struct {
 
 // NewHarborEventProcessor creates a new Harbor event processor
 func NewHarborEventProcessor(harborClient *harbor.Client, notifiers []notif.Notifier,
-	logger *zap.Logger, metrics *obs.Metrics, templates *notif.MessageTemplates, config *config.ProcessingConfig) *HarborEventProcessor {
+	logger *zap.Logger,
+	metrics *obs.Metrics,
+	templates *notif.MessageTemplates,
+	procConfig *config.ProcessingConfig,
+) *HarborEventProcessor {
 	return &HarborEventProcessor{
 		harborClient: harborClient,
 		notifiers:    notifiers,
 		logger:       logger,
 		metrics:      metrics,
 		templates:    templates,
-		config:       config,
+		config:       procConfig,
 	}
 }
 
@@ -78,9 +90,9 @@ func (p *HarborEventProcessor) Process(ctx context.Context, event *harbor.Event)
 
 	// Enrich scan overview via Harbor API if enabled
 	if p.config.EnrichViaHarborAPI {
-		enrichedOverview, err := p.enrichScanOverviewWithRetry(ctx, harborEvent, repo, errorContext)
-		if err != nil {
-			p.logger.Warn("Failed to enrich scan overview, using webhook data", zap.Error(err))
+		enrichedOverview, enrichErr := p.enrichScanOverviewWithRetry(ctx, harborEvent, repo, errorContext)
+		if enrichErr != nil {
+			p.logger.Warn("Failed to enrich scan overview, using webhook data", zap.Error(enrichErr))
 		} else if enrichedOverview != nil {
 			scanOverview = enrichedOverview
 		}
@@ -112,7 +124,11 @@ func (p *HarborEventProcessor) Process(ctx context.Context, event *harbor.Event)
 }
 
 // extractEventDataWithRetry extracts event data with retry logic
-func (p *HarborEventProcessor) extractEventDataWithRetry(ctx context.Context, event *harbor.Event, context map[string]interface{}) (*harbor.WebhookEvent, error) {
+func (p *HarborEventProcessor) extractEventDataWithRetry(
+	ctx context.Context,
+	event *harbor.Event,
+	ctxData map[string]interface{},
+) (*harbor.WebhookEvent, error) {
 	var harborEvent *harbor.WebhookEvent
 
 	operation := func() error {
@@ -125,7 +141,7 @@ func (p *HarborEventProcessor) extractEventDataWithRetry(ctx context.Context, ev
 		return nil
 	}
 
-	err := p.retryOperation(ctx, operation, "extract_event_data", context)
+	err := p.retryOperation(ctx, operation, "extract_event_data", ctxData)
 	if err != nil {
 		return nil, err
 	}
@@ -134,7 +150,11 @@ func (p *HarborEventProcessor) extractEventDataWithRetry(ctx context.Context, ev
 }
 
 // getScanOverviewWithRetry gets scan overview with retry logic
-func (p *HarborEventProcessor) getScanOverviewWithRetry(ctx context.Context, harborEvent *harbor.WebhookEvent, context map[string]interface{}) (*harbor.ScanOverview, error) {
+func (p *HarborEventProcessor) getScanOverviewWithRetry(
+	ctx context.Context,
+	harborEvent *harbor.WebhookEvent,
+	ctxData map[string]interface{},
+) (*harbor.ScanOverview, error) {
 	var scanOverview *harbor.ScanOverview
 
 	operation := func() error {
@@ -146,7 +166,7 @@ func (p *HarborEventProcessor) getScanOverviewWithRetry(ctx context.Context, har
 		return nil
 	}
 
-	err := p.retryOperation(ctx, operation, "get_scan_overview", context)
+	err := p.retryOperation(ctx, operation, "get_scan_overview", ctxData)
 	if err != nil {
 		return nil, err
 	}
@@ -155,7 +175,12 @@ func (p *HarborEventProcessor) getScanOverviewWithRetry(ctx context.Context, har
 }
 
 // enrichScanOverviewWithRetry enriches scan overview with retry logic
-func (p *HarborEventProcessor) enrichScanOverviewWithRetry(ctx context.Context, harborEvent *harbor.WebhookEvent, repo harbor.Repository, context map[string]interface{}) (*harbor.ScanOverview, error) {
+func (p *HarborEventProcessor) enrichScanOverviewWithRetry(
+	ctx context.Context,
+	harborEvent *harbor.WebhookEvent,
+	repo harbor.Repository,
+	ctxData map[string]interface{},
+) (*harbor.ScanOverview, error) {
 	resources, err := harborEvent.GetResources()
 	if err != nil {
 		return nil, errors.Wrapf(err, errors.ErrorTypeExternal, "get_resources_failed",
@@ -177,7 +202,7 @@ func (p *HarborEventProcessor) enrichScanOverviewWithRetry(ctx context.Context, 
 
 		// Create context for this specific resource
 		resourceContext := make(map[string]interface{})
-		for k, v := range context {
+		for k, v := range ctxData {
 			resourceContext[k] = v
 		}
 		resourceContext["reference"] = reference
@@ -227,7 +252,12 @@ func (p *HarborEventProcessor) enrichScanOverviewWithRetry(ctx context.Context, 
 }
 
 // getArtifactOverviewWithRetry gets artifact overview with retry logic
-func (p *HarborEventProcessor) getArtifactOverviewWithRetry(ctx context.Context, repo harbor.Repository, reference string, context map[string]interface{}) (*harbor.ArtifactOverview, error) {
+func (p *HarborEventProcessor) getArtifactOverviewWithRetry(
+	ctx context.Context,
+	repo harbor.Repository,
+	reference string,
+	ctxData map[string]interface{},
+) (*harbor.ArtifactOverview, error) {
 	var artifactOverview *harbor.ArtifactOverview
 
 	operation := func() error {
@@ -239,7 +269,7 @@ func (p *HarborEventProcessor) getArtifactOverviewWithRetry(ctx context.Context,
 		return nil
 	}
 
-	err := p.retryOperation(ctx, operation, "get_artifact_overview", context)
+	err := p.retryOperation(ctx, operation, "get_artifact_overview", ctxData)
 	if err != nil {
 		return nil, err
 	}
@@ -248,7 +278,12 @@ func (p *HarborEventProcessor) getArtifactOverviewWithRetry(ctx context.Context,
 }
 
 // createNotificationMessageWithRetry creates notification message with retry logic
-func (p *HarborEventProcessor) createNotificationMessageWithRetry(ctx context.Context, harborEvent *harbor.WebhookEvent, scanOverview *harbor.ScanOverview, context map[string]interface{}) (*notif.Message, error) {
+func (p *HarborEventProcessor) createNotificationMessageWithRetry(
+	ctx context.Context,
+	harborEvent *harbor.WebhookEvent,
+	scanOverview *harbor.ScanOverview,
+	ctxData map[string]interface{},
+) (*notif.Message, error) {
 	var msg *notif.Message
 
 	operation := func() error {
@@ -260,7 +295,7 @@ func (p *HarborEventProcessor) createNotificationMessageWithRetry(ctx context.Co
 		return nil
 	}
 
-	err := p.retryOperation(ctx, operation, "create_notification_message", context)
+	err := p.retryOperation(ctx, operation, "create_notification_message", ctxData)
 	if err != nil {
 		return nil, err
 	}
@@ -268,59 +303,67 @@ func (p *HarborEventProcessor) createNotificationMessageWithRetry(ctx context.Co
 	return msg, nil
 }
 
-// sendNotificationsWithRetry sends notifications with retry logic and circuit breaker
-func (p *HarborEventProcessor) sendNotificationsWithRetry(ctx context.Context, msg *notif.Message, context map[string]interface{}) error {
-	var lastErr error
+// sendNotificationsToAll sends notifications to all notifiers
+func (p *HarborEventProcessor) sendNotificationsToAll(ctx context.Context, msg *notif.Message) error {
+	var errs []error
+	for _, notifier := range p.notifiers {
+		notifierName := notifier.Name()
 
-	operation := func() error {
-		var errors []error
-		for _, notifier := range p.notifiers {
-			notifierName := notifier.Name()
+		p.logger.Debug("Sending notification to", zap.String("notifier", notifierName))
 
-			p.logger.Debug("Sending notification to", zap.String("notifier", notifierName))
-
-			err := notifier.Send(ctx, *msg)
-			if err != nil {
-				p.logger.Error("Failed to send notification",
-					zap.String("notifier", notifierName),
-					zap.Error(err))
-				errors = append(errors, fmt.Errorf("%s: %w", notifierName, err))
-			} else {
-				p.logger.Info("Notification sent successfully", zap.String("notifier", notifierName))
-				p.metrics.NotificationsSentTotal.WithLabelValues(notifierName, "success").Inc()
-			}
+		err := notifier.Send(ctx, msg)
+		if err != nil {
+			p.logger.Error("Failed to send notification",
+				zap.String("notifier", notifierName),
+				zap.Error(err))
+			errs = append(errs, fmt.Errorf("%s: %w", notifierName, err))
+		} else {
+			p.logger.Info("Notification sent successfully", zap.String("notifier", notifierName))
+			p.metrics.NotificationsSentTotal.WithLabelValues(notifierName, "success").Inc()
 		}
-
-		if len(errors) > 0 {
-			lastErr = fmt.Errorf("partial failures: %v", errors)
-			return lastErr
-		}
-
-		return nil
 	}
 
-	err := p.retryOperation(ctx, operation, "send_notifications", context)
-	if err != nil {
-		return err
+	if len(errs) > 0 {
+		return fmt.Errorf("partial failures: %v", errs)
 	}
 
 	return nil
 }
 
+// sendNotificationsWithRetry sends notifications with retry logic and circuit breaker
+func (p *HarborEventProcessor) sendNotificationsWithRetry(
+	ctx context.Context,
+	msg *notif.Message,
+	ctxData map[string]interface{},
+) error {
+	operation := func() error {
+		return p.sendNotificationsToAll(ctx, msg)
+	}
+
+	return p.retryOperation(ctx, operation, "send_notifications", ctxData)
+}
+
 // retryOperation executes an operation with retry logic and jitter
-func (p *HarborEventProcessor) retryOperation(ctx context.Context, operation func() error, operationName string, context map[string]interface{}) error {
+func (p *HarborEventProcessor) retryOperation(
+	ctx context.Context,
+	operation func() error,
+	operationName string,
+	ctxData map[string]interface{},
+) error {
 	var lastErr error
 
 	for attempt := 0; attempt < p.config.Retry.MaxAttempts; attempt++ {
 		if attempt > 0 {
 			// Calculate exponential backoff with jitter
+			// #nosec G115 -- attempt is bounded by MaxAttempts, overflow is not possible
 			baseWaitTime := p.config.Retry.InitialBackoff * time.Duration(1<<uint(attempt-1))
 			if baseWaitTime > p.config.Retry.MaxBackoff {
 				baseWaitTime = p.config.Retry.MaxBackoff
 			}
 
 			// Add jitter (±25% of base wait time)
-			jitterFactor := rand.Float64()*0.5 - 0.25 // -0.25 to +0.25
+			// #nosec G404 -- math/rand is sufficient for jitter calculation, crypto/rand not needed
+			jitterFactor := rand.Float64()*jitterMultiplier + jitterRangeMin // -0.25 to +0.25
 			jitter := time.Duration(jitterFactor * float64(baseWaitTime))
 			waitTime := baseWaitTime + jitter
 
@@ -328,7 +371,7 @@ func (p *HarborEventProcessor) retryOperation(ctx context.Context, operation fun
 				zap.String("operation", operationName),
 				zap.Int("attempt", attempt),
 				zap.Duration("wait_time", waitTime),
-				zap.Any("context", context))
+				zap.Any("context", ctxData))
 
 			select {
 			case <-time.After(waitTime):
@@ -347,7 +390,7 @@ func (p *HarborEventProcessor) retryOperation(ctx context.Context, operation fun
 			zap.String("operation", operationName),
 			zap.Int("attempt", attempt+1),
 			zap.Error(err),
-			zap.Any("context", context))
+			zap.Any("context", ctxData))
 	}
 
 	return errors.Wrapf(lastErr, errors.ErrorTypeExternal, "operation_failed_after_retries",
@@ -357,7 +400,11 @@ func (p *HarborEventProcessor) retryOperation(ctx context.Context, operation fun
 // extractHarborEvent extracts Harbor event data from the event
 
 // createNotificationMessage creates a notification message from Harbor event
-func (p *HarborEventProcessor) createNotificationMessage(ctx context.Context, harborEvent *harbor.WebhookEvent, scanOverview *harbor.ScanOverview) (*notif.Message, error) {
+func (p *HarborEventProcessor) createNotificationMessage(
+	_ context.Context,
+	harborEvent *harbor.WebhookEvent,
+	scanOverview *harbor.ScanOverview,
+) (*notif.Message, error) {
 	// Extract basic information
 	repo, err := harborEvent.GetRepository()
 	if err != nil {
@@ -409,7 +456,7 @@ func (p *HarborEventProcessor) createNotificationMessage(ctx context.Context, ha
 }
 
 // formatTitle formats the notification title
-func (p *HarborEventProcessor) formatTitle(eventType string, repoName string) string {
+func (p *HarborEventProcessor) formatTitle(eventType, repoName string) string {
 	switch eventType {
 	case "SCANNING_COMPLETED":
 		return fmt.Sprintf("✅ Scan Completed: %s", repoName)
@@ -421,7 +468,11 @@ func (p *HarborEventProcessor) formatTitle(eventType string, repoName string) st
 }
 
 // formatBody formats the notification body
-func (p *HarborEventProcessor) formatBody(harborEvent *harbor.WebhookEvent, repo harbor.Repository, scanOverview *harbor.ScanOverview) string {
+func (p *HarborEventProcessor) formatBody(
+	harborEvent *harbor.WebhookEvent,
+	repo harbor.Repository,
+	scanOverview *harbor.ScanOverview,
+) string {
 	body := fmt.Sprintf("Repository: `%s`\n", repo.Name)
 	body += fmt.Sprintf("Event: `%s`\n", harborEvent.Type)
 	body += fmt.Sprintf("Operator: `%s`\n", harborEvent.Operator)
@@ -441,105 +492,6 @@ func (p *HarborEventProcessor) formatBody(harborEvent *harbor.WebhookEvent, repo
 	body += fmt.Sprintf("\n🕐 Timestamp: %s", time.Unix(harborEvent.OccurAt, 0).Format(time.RFC3339))
 
 	return body
-}
-
-// sendNotifications sends the notification to all configured notifiers
-func (p *HarborEventProcessor) sendNotifications(ctx context.Context, msg *notif.Message) error {
-	p.logger.Info("Sending notifications",
-		zap.String("title", msg.Title),
-		zap.Int("notifiers", len(p.notifiers)))
-
-	var errors []error
-	for _, notifier := range p.notifiers {
-		notifierName := notifier.Name()
-
-		p.logger.Debug("Sending notification to", zap.String("notifier", notifierName))
-
-		err := notifier.Send(ctx, *msg)
-		if err != nil {
-			p.logger.Error("Failed to send notification",
-				zap.String("notifier", notifierName),
-				zap.Error(err))
-			errors = append(errors, fmt.Errorf("%s: %w", notifierName, err))
-		} else {
-			p.logger.Info("Notification sent successfully", zap.String("notifier", notifierName))
-			p.metrics.NotificationsSentTotal.WithLabelValues(notifierName, "success").Inc()
-		}
-	}
-
-	if len(errors) > 0 {
-		return fmt.Errorf("partial failures: %v", errors)
-	}
-
-	return nil
-}
-
-// enrichScanOverview enriches the scan overview with Harbor API data
-func (p *HarborEventProcessor) enrichScanOverview(ctx context.Context, harborEvent *harbor.WebhookEvent, repo harbor.Repository) (*harbor.ScanOverview, error) {
-	resources, err := harborEvent.GetResources()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get resources: %w", err)
-	}
-
-	if len(resources) == 0 {
-		return nil, nil
-	}
-
-	var enrichedOverview *harbor.ScanOverview
-	successCount := 0
-	for _, resource := range resources {
-		// Extract artifact reference from resource
-		// This is a simplified extraction - in practice, you'd parse the resource URL or use more sophisticated logic
-		reference := resource.ResourceName // Use tag or digest
-		if reference == "" {
-			continue
-		}
-
-		artifactOverview, err := p.harborClient.GetArtifactOverview(ctx, repo.ProjectID, repo.Name, reference)
-		if err != nil {
-			p.logger.Warn("Failed to fetch artifact overview",
-				zap.Int("project_id", repo.ProjectID),
-				zap.String("repository", repo.Name),
-				zap.String("reference", reference),
-				zap.Error(err))
-			p.metrics.RecordHarborAPIError("get_artifact_overview", http.StatusInternalServerError)
-			continue
-		}
-
-		// Convert ArtifactOverview to ScanOverview and aggregate
-		currentOverview := &harbor.ScanOverview{
-			Scanner:   artifactOverview.Scanner,
-			Summary:   make(map[string]int),
-			Status:    "success", // Assume success
-			Timestamp: time.Now(),
-		}
-		for severity, count := range artifactOverview.Summary {
-			if f, ok := count.(float64); ok {
-				currentOverview.Summary[severity] = int(f)
-			}
-		}
-
-		if enrichedOverview == nil {
-			enrichedOverview = currentOverview
-		} else {
-			// Merge summary
-			for severity, count := range currentOverview.Summary {
-				enrichedOverview.Summary[severity] += count
-			}
-		}
-
-		successCount++
-		p.logger.Debug("Enriched scan overview",
-			zap.String("reference", reference),
-			zap.Int("components", artifactOverview.Components),
-			zap.Any("summary", currentOverview.Summary))
-	}
-
-	if successCount > 0 {
-		p.metrics.RecordHarborAPIError("get_artifact_overview", http.StatusOK)
-	}
-
-	return enrichedOverview, nil
 }
 
 // IdempotencyManager handles idempotency for events

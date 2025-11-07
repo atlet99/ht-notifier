@@ -37,7 +37,7 @@ type MattermostMessageFormat struct {
 }
 
 // NewMattermost creates a new Mattermost notifier
-func NewMattermost(cfg config.MattermostConfig, limiter RateLimiter) (*Mattermost, error) {
+func NewMattermost(cfg *config.MattermostConfig, limiter RateLimiter) (*Mattermost, error) {
 	// Validate configuration
 	if err := ValidateMattermostConfig(cfg); err != nil {
 		return nil, fmt.Errorf("invalid Mattermost configuration: %w", err)
@@ -64,7 +64,7 @@ func NewMattermost(cfg config.MattermostConfig, limiter RateLimiter) (*Mattermos
 		channel:             cfg.Channel,
 		team:                cfg.Team,
 		limiter:             limiter,
-		config:              cfg,
+		config:              *cfg,
 		messageFormat:       messageFormat,
 		shouldCreateChannel: cfg.CreateChannel,
 		channelType:         cfg.ChannelType,
@@ -73,7 +73,7 @@ func NewMattermost(cfg config.MattermostConfig, limiter RateLimiter) (*Mattermos
 }
 
 // Send implements the Notifier interface
-func (m *Mattermost) Send(ctx context.Context, msg Message) error {
+func (m *Mattermost) Send(ctx context.Context, msg *Message) error {
 	start := time.Now()
 
 	// Apply rate limiting if configured
@@ -132,138 +132,27 @@ func (m *Mattermost) recordSuccess(duration time.Duration) {
 	m.metrics.TotalSent++
 	m.metrics.LastSent = time.Now()
 	m.metrics.LastDuration = duration
-	m.metrics.AvgDuration = time.Duration((int64(m.metrics.AvgDuration)*m.metrics.TotalSent + int64(duration)) / (m.metrics.TotalSent + 1))
+	m.metrics.AvgDuration = time.Duration(
+		(int64(m.metrics.AvgDuration)*m.metrics.TotalSent + int64(duration)) /
+			(m.metrics.TotalSent + 1))
 }
 
 // recordFailure records a failed notification
-func (m *Mattermost) recordFailure(err error) {
+func (m *Mattermost) recordFailure(_ error) {
 	m.metrics.TotalFailed++
 	m.metrics.LastFailed = time.Now()
 }
 
 // formatMessage formats the message for Mattermost
-func (m *Mattermost) formatMessage(msg Message) string {
-	var builder strings.Builder
-
-	// Add custom prefix if provided
-	if m.config.MessageFormat.CustomPrefix != "" {
-		if m.messageFormat.EscapeMarkdown {
-			builder.WriteString(escapeMarkdownV2Mattermost(m.config.MessageFormat.CustomPrefix))
-		} else {
-			builder.WriteString(m.config.MessageFormat.CustomPrefix)
-		}
-		builder.WriteString("\n\n")
-	}
-
-	// Add title if provided
-	if msg.Title != "" {
-		if m.messageFormat.EscapeMarkdown {
-			builder.WriteString("*")
-			builder.WriteString(escapeMarkdownV2Mattermost(msg.Title))
-			builder.WriteString("*")
-		} else {
-			builder.WriteString(msg.Title)
-		}
-		builder.WriteString("\n\n")
-	}
-
-	// Add body
-	if msg.Body != "" {
-		if m.messageFormat.EscapeMarkdown {
-			builder.WriteString(escapeMarkdownV2Mattermost(msg.Body))
-		} else {
-			builder.WriteString(msg.Body)
-		}
-		builder.WriteString("\n\n")
-	}
-
-	// Add severity information if available
-	if m.messageFormat.IncludeSeverity && len(msg.SeverityCounts) > 0 {
-		builder.WriteString("*Severity Summary:*\n")
-		if critical, ok := msg.SeverityCounts["Critical"]; ok && critical > 0 {
-			color := m.config.MessageFormat.SeverityColors.Critical
-			if color == "" {
-				color = "🔴"
-			}
-			builder.WriteString(fmt.Sprintf("%s Critical: %d\n", color, critical))
-		}
-		if high, ok := msg.SeverityCounts["High"]; ok && high > 0 {
-			color := m.config.MessageFormat.SeverityColors.High
-			if color == "" {
-				color = "🟠"
-			}
-			builder.WriteString(fmt.Sprintf("%s High: %d\n", color, high))
-		}
-		if medium, ok := msg.SeverityCounts["Medium"]; ok && medium > 0 {
-			color := m.config.MessageFormat.SeverityColors.Medium
-			if color == "" {
-				color = "🟡"
-			}
-			builder.WriteString(fmt.Sprintf("%s Medium: %d\n", color, medium))
-		}
-		if low, ok := msg.SeverityCounts["Low"]; ok && low > 0 {
-			color := m.config.MessageFormat.SeverityColors.Low
-			if color == "" {
-				color = "🟢"
-			}
-			builder.WriteString(fmt.Sprintf("%s Low: %d\n", color, low))
-		}
-		if unknown, ok := msg.SeverityCounts["Unknown"]; ok && unknown > 0 {
-			color := m.config.MessageFormat.SeverityColors.Unknown
-			if color == "" {
-				color = "⚪"
-			}
-			builder.WriteString(fmt.Sprintf("%s Unknown: %d\n", color, unknown))
-		}
-		builder.WriteString("\n")
-	}
-
-	// Add link if provided
-	if msg.Link != "" {
-		if m.messageFormat.EscapeMarkdown {
-			builder.WriteString(fmt.Sprintf("🔗 [Open in Harbor](%s)", escapeMarkdownV2Mattermost(msg.Link)))
-		} else {
-			builder.WriteString(fmt.Sprintf("🔗 Open in Harbor: %s", msg.Link))
-		}
-		builder.WriteString("\n")
-	}
-
-	// Add timestamp if enabled
-	if m.messageFormat.ShowTimestamp {
-		builder.WriteString(fmt.Sprintf("\n⏰ *Timestamp:* %s", time.Now().Format(time.RFC3339)))
-	}
-
-	// Add metadata if available
-	if len(msg.Metadata) > 0 {
-		builder.WriteString("\n\n*Additional Information:*\n")
-		for key, value := range msg.Metadata {
-			if m.messageFormat.EscapeMarkdown {
-				builder.WriteString(fmt.Sprintf("*%s:* %s\n",
-					escapeMarkdownV2Mattermost(key),
-					escapeMarkdownV2Mattermost(fmt.Sprintf("%v", value))))
-			} else {
-				builder.WriteString(fmt.Sprintf("*%s:* %v\n", key, value))
-			}
-		}
-	}
-
-	// Add custom suffix if provided
-	if m.config.MessageFormat.CustomSuffix != "" {
-		builder.WriteString("\n\n")
-		if m.messageFormat.EscapeMarkdown {
-			builder.WriteString(escapeMarkdownV2Mattermost(m.config.MessageFormat.CustomSuffix))
-		} else {
-			builder.WriteString(m.config.MessageFormat.CustomSuffix)
-		}
-	}
-
-	// Truncate message if it exceeds max length
-	result := builder.String()
-	if m.config.MessageFormat.MaxMessageLength > 0 && len(result) > m.config.MessageFormat.MaxMessageLength {
-		result = result[:m.config.MessageFormat.MaxMessageLength-3] + "..."
-	}
-
-	return result
+func (m *Mattermost) formatMessage(msg *Message) string {
+	return formatMessageCommon(
+		msg,
+		&m.config.MessageFormat,
+		m.messageFormat.EscapeMarkdown,
+		m.messageFormat.IncludeSeverity,
+		m.messageFormat.ShowTimestamp,
+		escapeMarkdownV2Mattermost,
+	)
 }
 
 // createPost creates a post in Mattermost
@@ -326,7 +215,7 @@ func (m *Mattermost) createPost(ctx context.Context, payload map[string]interfac
 func (m *Mattermost) getTeamID(ctx context.Context, teamName string) (string, error) {
 	apiURL := fmt.Sprintf("%s/api/v4/teams/name/%s", m.serverURL, teamName)
 
-	req, err := http.NewRequestWithContext(ctx, "GET", apiURL, nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", apiURL, http.NoBody)
 	if err != nil {
 		return "", fmt.Errorf("failed to create request: %w", err)
 	}
@@ -373,7 +262,7 @@ func (m *Mattermost) ensureChannelExists(ctx context.Context, teamID, channelNam
 func (m *Mattermost) getChannelID(ctx context.Context, teamID, channelName string) (string, error) {
 	apiURL := fmt.Sprintf("%s/api/v4/teams/%s/channels/name/%s", m.serverURL, teamID, channelName)
 
-	req, err := http.NewRequestWithContext(ctx, "GET", apiURL, nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", apiURL, http.NoBody)
 	if err != nil {
 		return "", fmt.Errorf("failed to create request: %w", err)
 	}
@@ -401,7 +290,10 @@ func (m *Mattermost) getChannelID(ctx context.Context, teamID, channelName strin
 }
 
 // createChannelInternal creates a new channel
-func (m *Mattermost) createChannelInternal(ctx context.Context, teamID, channelName, channelType string) (string, error) {
+func (m *Mattermost) createChannelInternal(
+	ctx context.Context,
+	teamID, channelName, channelType string,
+) (string, error) {
 	apiURL := fmt.Sprintf("%s/api/v4/teams/%s/channels", m.serverURL, teamID)
 
 	payload := map[string]interface{}{
@@ -445,7 +337,7 @@ func (m *Mattermost) createChannelInternal(ctx context.Context, teamID, channelN
 }
 
 // ValidateMattermostConfig validates Mattermost configuration
-func ValidateMattermostConfig(cfg config.MattermostConfig) error {
+func ValidateMattermostConfig(cfg *config.MattermostConfig) error {
 	if cfg.ServerURL == "" {
 		return fmt.Errorf("Mattermost server URL is required")
 	}
@@ -489,7 +381,7 @@ func (m *Mattermost) TestConnection(ctx context.Context) error {
 	// Test by getting user info
 	apiURL := fmt.Sprintf("%s/api/v4/users/me", m.serverURL)
 
-	req, err := http.NewRequestWithContext(ctx, "GET", apiURL, nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", apiURL, http.NoBody)
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
 	}
@@ -513,7 +405,7 @@ func (m *Mattermost) TestConnection(ctx context.Context) error {
 func (m *Mattermost) GetUserInfo(ctx context.Context) (*UserInfo, error) {
 	apiURL := fmt.Sprintf("%s/api/v4/users/me", m.serverURL)
 
-	req, err := http.NewRequestWithContext(ctx, "GET", apiURL, nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", apiURL, http.NoBody)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
@@ -542,7 +434,7 @@ func (m *Mattermost) GetUserInfo(ctx context.Context) (*UserInfo, error) {
 func (m *Mattermost) GetChannelInfo(ctx context.Context, channelID string) (*ChannelInfo, error) {
 	apiURL := fmt.Sprintf("%s/api/v4/channels/%s", m.serverURL, channelID)
 
-	req, err := http.NewRequestWithContext(ctx, "GET", apiURL, nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", apiURL, http.NoBody)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
