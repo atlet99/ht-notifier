@@ -20,6 +20,7 @@ import (
 	"sync"
 	"time"
 
+	"go.uber.org/zap"
 	"golang.org/x/time/rate"
 )
 
@@ -73,12 +74,12 @@ type Fanout struct {
 	targets         []Notifier
 	limiter         RateLimiter
 	circuitBreakers map[string]*CircuitBreaker
-	logger          interface{} // TODO: Replace with proper logger interface
+	logger          *zap.Logger
 	mu              sync.RWMutex
 }
 
 // NewFanout creates a new fanout notifier
-func NewFanout(targets []Notifier, limiter RateLimiter, logger interface{}) *Fanout {
+func NewFanout(targets []Notifier, limiter RateLimiter, logger *zap.Logger) *Fanout {
 	f := &Fanout{
 		targets:         targets,
 		limiter:         limiter,
@@ -141,10 +142,21 @@ func (f *Fanout) Send(ctx context.Context, msg *Message) error {
 	}
 
 	// Log results
-	_ = successes // TODO: Log successful deliveries
+	if len(successes) > 0 {
+		f.logger.Info("Notifications sent successfully",
+			zap.Strings("notifiers", successes),
+			zap.Int("count", len(successes)))
+	}
 
 	if len(errors) > 0 {
-		// TODO: Log failures
+		errorMessages := make([]string, len(errors))
+		for i, err := range errors {
+			errorMessages[i] = err.Error()
+		}
+		f.logger.Warn("Some notifications failed",
+			zap.Int("failed_count", len(errors)),
+			zap.Int("success_count", len(successes)),
+			zap.Strings("errors", errorMessages))
 		return fmt.Errorf("partial failures: %d succeeded, %d failed: %v", len(successes), len(errors), errors)
 	}
 
@@ -240,11 +252,11 @@ type CircuitBreaker struct {
 	failures         int
 	lastFailureTime  time.Time
 	mu               sync.RWMutex
-	logger           interface{} // TODO: Replace with proper logger interface
+	logger           *zap.Logger
 }
 
 // NewCircuitBreaker creates a new circuit breaker
-func NewCircuitBreaker(failureThreshold int, resetTimeout time.Duration, logger interface{}) *CircuitBreaker {
+func NewCircuitBreaker(failureThreshold int, resetTimeout time.Duration, logger *zap.Logger) *CircuitBreaker {
 	return &CircuitBreaker{
 		failureThreshold: failureThreshold,
 		resetTimeout:     resetTimeout,
@@ -264,7 +276,11 @@ func (cb *CircuitBreaker) Execute(operation func() error, _ map[string]interface
 			cb.mu.Lock()
 			cb.state = "half-open"
 			cb.mu.Unlock()
-			// TODO: Log state change
+			if cb.logger != nil {
+				cb.logger.Info("Circuit breaker transitioning to half-open state",
+					zap.Duration("reset_timeout", cb.resetTimeout),
+					zap.Time("last_failure", cb.lastFailureTime))
+			}
 		} else {
 			return fmt.Errorf("circuit breaker is open")
 		}
@@ -290,7 +306,12 @@ func (cb *CircuitBreaker) recordFailure() {
 
 	if cb.failures >= cb.failureThreshold {
 		cb.state = "open"
-		// TODO: Log circuit breaker opening
+		if cb.logger != nil {
+			cb.logger.Warn("Circuit breaker opened due to failures",
+				zap.Int("failures", cb.failures),
+				zap.Int("threshold", cb.failureThreshold),
+				zap.Time("last_failure", cb.lastFailureTime))
+		}
 	}
 }
 
@@ -302,7 +323,10 @@ func (cb *CircuitBreaker) recordSuccess() {
 	cb.failures = 0
 	if cb.state == "half-open" {
 		cb.state = "closed"
-		// TODO: Log circuit breaker closing
+		if cb.logger != nil {
+			cb.logger.Info("Circuit breaker closed after successful operation",
+				zap.Duration("reset_timeout", cb.resetTimeout))
+		}
 	}
 }
 
@@ -319,7 +343,7 @@ type RetryNotifier struct {
 	target         Notifier
 	config         RetryConfig
 	circuitBreaker *CircuitBreaker
-	logger         interface{} // TODO: Replace with proper logger interface
+	logger         *zap.Logger
 }
 
 // NewRetryNotifier creates a new retry notifier with circuit breaker
@@ -327,7 +351,7 @@ func NewRetryNotifier(
 	target Notifier,
 	config RetryConfig,
 	circuitBreaker *CircuitBreaker,
-	logger interface{},
+	logger *zap.Logger,
 ) *RetryNotifier {
 	return &RetryNotifier{
 		target:         target,

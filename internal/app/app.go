@@ -29,6 +29,7 @@ import (
 	"github.com/atlet99/ht-notifier/internal/errors"
 	"github.com/atlet99/ht-notifier/internal/httpx"
 	"github.com/atlet99/ht-notifier/internal/notif"
+	"github.com/atlet99/ht-notifier/internal/proc"
 	"github.com/atlet99/ht-notifier/internal/version"
 )
 
@@ -39,17 +40,24 @@ const (
 
 // App represents the main application instance.
 type App struct {
-	config        *config.Config
-	httpServer    *http.Server
-	httpHandler   *httpx.Handler
-	notifiers     []notif.Notifier
-	logger        *zap.Logger
-	errorLogger   *errors.ErrorLogger
-	errorRecovery *errors.ErrorRecovery
+	config         *config.Config
+	httpServer     *http.Server
+	httpHandler    *httpx.Handler
+	notifiers      []notif.Notifier
+	logger         *zap.Logger
+	errorLogger    *errors.ErrorLogger
+	errorRecovery  *errors.ErrorRecovery
+	eventProcessor *proc.HarborEventProcessor
 }
 
 // New creates a new App instance with the provided configuration and dependencies.
-func New(cfg *config.Config, logger *zap.Logger, httpHandler *httpx.Handler, notifiers []notif.Notifier) (*App, error) {
+func New(
+	cfg *config.Config,
+	logger *zap.Logger,
+	httpHandler *httpx.Handler,
+	notifiers []notif.Notifier,
+	eventProcessor *proc.HarborEventProcessor,
+) (*App, error) {
 	// Initialize error handling components
 	errorLogger := errors.NewErrorLogger(logger)
 	errorRecovery := errors.NewErrorRecovery(logger, defaultErrorRecoveryMaxAttempts, 1*time.Second)
@@ -62,18 +70,24 @@ func New(cfg *config.Config, logger *zap.Logger, httpHandler *httpx.Handler, not
 	}
 
 	return &App{
-		config:        cfg,
-		httpServer:    httpServer,
-		httpHandler:   httpHandler,
-		notifiers:     notifiers,
-		logger:        logger,
-		errorLogger:   errorLogger,
-		errorRecovery: errorRecovery,
+		config:         cfg,
+		httpServer:     httpServer,
+		httpHandler:    httpHandler,
+		notifiers:      notifiers,
+		logger:         logger,
+		errorLogger:    errorLogger,
+		errorRecovery:  errorRecovery,
+		eventProcessor: eventProcessor,
 	}, nil
 }
 
 // Run starts the application and blocks until the context is canceled or an error occurs.
 func (a *App) Run(ctx context.Context) error {
+	// Start event processor worker pool
+	if a.eventProcessor != nil {
+		a.eventProcessor.Start()
+	}
+
 	// Start HTTP server with error recovery
 	serverErr := make(chan error, 1)
 	go func() {
@@ -111,6 +125,11 @@ func (a *App) Shutdown() error {
 	// Log shutdown initiation
 	a.logger.Info("Initiating graceful shutdown",
 		zap.Duration("timeout", a.config.Server.ShutdownTimeout))
+
+	// Stop event processor first (this will wait for workers to finish)
+	if a.eventProcessor != nil {
+		a.eventProcessor.Stop()
+	}
 
 	// Shutdown HTTP server with error handling
 	shutdownErr := a.httpServer.Shutdown(ctx)

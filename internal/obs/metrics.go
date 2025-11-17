@@ -17,6 +17,7 @@ package obs
 import (
 	"context"
 	"net/http"
+	"runtime"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -73,6 +74,9 @@ type Metrics struct {
 	SystemUptimeGauge prometheus.Gauge
 	SystemMemoryUsage prometheus.Gauge
 	SystemCPUUsage    prometheus.Gauge
+
+	// Idempotency metrics
+	IdempotencyCacheSizeGauge prometheus.Gauge
 }
 
 // NewMetrics creates and registers all Prometheus metrics
@@ -90,6 +94,7 @@ func NewMetrics(registry prometheus.Registerer, namespace string) *Metrics {
 	createQueueMetrics(m, registry, namespace)
 	createWorkerMetrics(m, registry, namespace)
 	createSystemMetrics(m, registry, namespace)
+	createIdempotencyMetrics(m, registry, namespace)
 
 	// Initialize system metrics
 	m.SystemUptimeGauge.Set(0)
@@ -290,6 +295,16 @@ func createWorkerMetrics(m *Metrics, registry prometheus.Registerer, namespace s
 	)
 }
 
+func createIdempotencyMetrics(m *Metrics, registry prometheus.Registerer, namespace string) {
+	m.IdempotencyCacheSizeGauge = promauto.With(registry).NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: namespace,
+			Name:      "idempotency_cache_size",
+			Help:      "Current number of events in the idempotency cache",
+		},
+	)
+}
+
 func createSystemMetrics(m *Metrics, registry prometheus.Registerer, namespace string) {
 	m.SystemUptimeGauge = promauto.With(registry).NewGauge(
 		prometheus.GaugeOpts{
@@ -400,8 +415,17 @@ func (m *Metrics) UpdateWorkerBusy(busy int) {
 func (m *Metrics) UpdateSystemMetrics(startTime time.Time) {
 	m.SystemUptimeGauge.Set(time.Since(startTime).Seconds())
 
-	// TODO: Implement actual memory and CPU usage collection
-	// This would require platform-specific implementations
+	// Update memory metrics using runtime package
+	var memStats runtime.MemStats
+	runtime.ReadMemStats(&memStats)
+	m.SystemMemoryUsage.Set(float64(memStats.Alloc)) // Allocated memory in bytes
+
+	// Note: CPU usage percentage requires more complex calculation with time-based sampling
+	// For now, we'll use NumGoroutine as a proxy metric for system load
+	// Actual CPU percentage would require cgo and platform-specific code
+	// This is a common limitation in Go applications
+	numGoroutines := runtime.NumGoroutine()
+	m.SystemCPUUsage.Set(float64(numGoroutines)) // Using goroutine count as load indicator
 }
 
 // statusCodeToString converts HTTP status code to string

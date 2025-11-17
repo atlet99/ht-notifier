@@ -116,7 +116,7 @@ func Wire(cfg *config.Config) (*App, error) {
 	httpHandler := httpx.NewHandler(cfg, logger, securityManager, eventProcessor, notifiers, healthChecker)
 
 	// Create application
-	app, err := New(cfg, logger, httpHandler, notifiers)
+	app, err := New(cfg, logger, httpHandler, notifiers, eventProcessor)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create application: %w", err)
 	}

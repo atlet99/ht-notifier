@@ -109,8 +109,8 @@ func (h *WebhookHandler) HandleHarborWebhook(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	// Process the webhook event
-	if !h.processWebhookEvent(w, r, &webhookEvent, startTime) {
+	// Enqueue the webhook event for async processing
+	if !h.enqueueWebhookEvent(w, r, &webhookEvent, startTime) {
 		return
 	}
 
@@ -197,19 +197,29 @@ func (h *WebhookHandler) parseAndValidateWebhook(w http.ResponseWriter, body []b
 	return webhookEvent, true
 }
 
-func (h *WebhookHandler) processWebhookEvent(
+// handleWebhookEventError handles errors from webhook event processing
+func (h *WebhookHandler) handleWebhookEventError(
+	w http.ResponseWriter,
+	eventType string,
+	err error,
+	errorMessage string,
+) {
+	h.logger.Error("Failed to process webhook event",
+		zap.String("event_type", eventType),
+		zap.Error(err))
+	h.metrics.RecordHarborAPIError("webhook", httpStatusInternalServerError)
+	http.Error(w, errorMessage, http.StatusInternalServerError)
+}
+
+func (h *WebhookHandler) enqueueWebhookEvent(
 	w http.ResponseWriter,
 	r *http.Request,
 	webhookEvent *harbor.Event,
 	_ time.Time,
 ) bool {
 	ctx := r.Context()
-	if err := h.eventProcessor.Process(ctx, webhookEvent); err != nil {
-		h.logger.Error("Failed to process webhook event",
-			zap.String("event_type", webhookEvent.Type),
-			zap.Error(err))
-		h.metrics.RecordHarborAPIError("webhook", httpStatusInternalServerError)
-		http.Error(w, "Internal Server Error - Failed to process event", http.StatusInternalServerError)
+	if err := h.eventProcessor.Enqueue(ctx, webhookEvent); err != nil {
+		h.handleWebhookEventError(w, webhookEvent.Type, err, "Internal Server Error - Failed to enqueue event")
 		return false
 	}
 	return true

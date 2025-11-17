@@ -27,13 +27,12 @@ import (
 	"github.com/atlet99/ht-notifier/internal/harbor"
 	"github.com/atlet99/ht-notifier/internal/notif"
 	"github.com/atlet99/ht-notifier/internal/obs"
+	"github.com/atlet99/ht-notifier/internal/util"
 )
 
 const (
 	queueWorkerRetryDelay = 100 * time.Millisecond
 	queueProcessTimeout   = 5 * time.Minute
-	jitterPercentage      = 0.25
-	jitterDivisor         = 2
 )
 
 // Event represents a processing event
@@ -268,18 +267,12 @@ func (w *Worker) processEvent(event *Event) {
 
 // calculateBackoff calculates exponential backoff with jitter
 func (w *Worker) calculateBackoff(attempt int) time.Duration {
-	// #nosec G115 -- attempt is bounded by MaxAttempts, overflow is not possible
-	backoff := w.retryConfig.InitialBackoff * time.Duration(1<<uint(attempt-1))
-	if backoff > w.retryConfig.MaxBackoff {
-		backoff = w.retryConfig.MaxBackoff
+	retryConfig := util.RetryConfig{
+		MaxAttempts:    w.retryConfig.MaxAttempts,
+		InitialBackoff: w.retryConfig.InitialBackoff,
+		MaxBackoff:     w.retryConfig.MaxBackoff,
 	}
-
-	// Add jitter (±25%)
-	jitter := float64(backoff) * jitterPercentage
-	jitterDuration := time.Duration(jitter)
-
-	jitterOffset := time.Duration(float64(jitterDuration) / jitterDivisor)
-	return backoff + jitterOffset - jitterOffset
+	return util.CalculateBackoff(attempt, retryConfig)
 }
 
 // Pool represents a worker pool

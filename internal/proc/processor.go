@@ -18,7 +18,6 @@ package proc
 import (
 	"context"
 	"fmt"
-	"math/rand"
 	"net/http"
 	"sync"
 	"time"
@@ -30,17 +29,14 @@ import (
 	"github.com/atlet99/ht-notifier/internal/harbor"
 	"github.com/atlet99/ht-notifier/internal/notif"
 	"github.com/atlet99/ht-notifier/internal/obs"
+	"github.com/atlet99/ht-notifier/internal/util"
 )
 
 const (
-	jitterRangeMin   = -0.25
-	jitterRangeMax   = 0.25
-	jitterMultiplier = 0.5
 	// IdempotencyTTL is the time-to-live for processed events in idempotency manager
 	IdempotencyTTL = 24 * time.Hour
-	// maxShiftBits is the maximum number of bits to shift for exponential backoff
-	// This prevents integer overflow (2^31 is the safe limit for int32)
-	maxShiftBits = 31
+	// IdempotencyCleanupDivisor is the divisor for calculating cleanup interval (half of TTL)
+	IdempotencyCleanupDivisor = 2
 )
 
 // HarborEventProcessor processes Harbor webhook events
@@ -52,6 +48,8 @@ type HarborEventProcessor struct {
 	templates      *notif.MessageTemplates
 	config         *config.ProcessingConfig
 	idempotencyMgr *IdempotencyManager
+	queue          *Queue
+	pool           *Pool
 }
 
 // NewHarborEventProcessor creates a new Harbor event processor
@@ -62,9 +60,17 @@ func NewHarborEventProcessor(harborClient *harbor.Client, notifiers []notif.Noti
 	procConfig *config.ProcessingConfig,
 ) *HarborEventProcessor {
 	// Create idempotency manager with configured TTL
-	idempotencyMgr := NewIdempotencyManager(logger, IdempotencyTTL)
+	idempotencyMgr := NewIdempotencyManager(logger, IdempotencyTTL, metrics)
 
-	return &HarborEventProcessor{
+	// Create queue for async processing
+	queue := NewQueue(procConfig.MaxQueue, logger, metrics)
+
+	// Create adapter processor for queue events
+	adapterProcessor := &HarborEventAdapter{
+		harborProcessor: nil, // Will be set below
+	}
+
+	processor := &HarborEventProcessor{
 		harborClient:   harborClient,
 		notifiers:      notifiers,
 		logger:         logger,
@@ -72,7 +78,27 @@ func NewHarborEventProcessor(harborClient *harbor.Client, notifiers []notif.Noti
 		templates:      templates,
 		config:         procConfig,
 		idempotencyMgr: idempotencyMgr,
+		queue:          queue,
 	}
+
+	// Set the adapter's reference to the processor
+	adapterProcessor.harborProcessor = processor
+
+	// Create worker pool
+	pool := NewPool(
+		procConfig.MaxConcurrency,
+		queue,
+		adapterProcessor,
+		logger,
+		metrics,
+		procConfig.Retry,
+		harborClient,
+		notifiers,
+	)
+
+	processor.pool = pool
+
+	return processor
 }
 
 // generateEventID generates a unique ID for an event based on its properties
@@ -82,7 +108,92 @@ func (p *HarborEventProcessor) generateEventID(event *harbor.Event) string {
 	return fmt.Sprintf("%s:%d:%s", event.Type, event.OccurAt, event.Operator)
 }
 
+// Start starts the worker pool for async processing
+func (p *HarborEventProcessor) Start() {
+	// Start idempotency manager cleanup
+	if p.idempotencyMgr != nil {
+		p.idempotencyMgr.Start()
+	}
+
+	if p.pool != nil {
+		p.pool.Start()
+		p.logger.Info("Event processor started with worker pool",
+			zap.Int("workers", p.config.MaxConcurrency),
+			zap.Int("queue_size", p.config.MaxQueue))
+	}
+}
+
+// Stop stops the worker pool gracefully
+func (p *HarborEventProcessor) Stop() {
+	// Stop idempotency manager cleanup
+	if p.idempotencyMgr != nil {
+		p.idempotencyMgr.Stop()
+		// Final cleanup before shutdown
+		removed := p.idempotencyMgr.Cleanup()
+		p.logger.Info("IdempotencyManager final cleanup",
+			zap.Int("removed_events", removed),
+			zap.Int("remaining_events", p.idempotencyMgr.Size()))
+	}
+
+	if p.pool != nil {
+		p.logger.Info("Stopping event processor worker pool")
+		p.pool.Stop()
+	}
+	if p.queue != nil {
+		if err := p.queue.Close(); err != nil {
+			p.logger.Warn("Error closing queue", zap.Error(err))
+		}
+	}
+	p.logger.Info("Event processor stopped")
+}
+
+// Enqueue adds a Harbor event to the processing queue
+func (p *HarborEventProcessor) Enqueue(ctx context.Context, event *harbor.Event) error {
+	// Check if context is canceled
+	select {
+	case <-ctx.Done():
+		return fmt.Errorf("context canceled: %w", ctx.Err())
+	default:
+	}
+
+	// Generate event ID
+	eventID := p.generateEventID(event)
+
+	// Check idempotency before queuing
+	if p.idempotencyMgr.IsProcessed(eventID) {
+		p.logger.Info("Event already processed, skipping",
+			zap.String("event_id", eventID),
+			zap.String("event_type", event.Type))
+		p.metrics.RecordHarborEvent("harbor_event", "duplicate", 0)
+		return nil
+	}
+
+	// Convert harbor.Event to queue.Event
+	queueEvent := &Event{
+		ID:        eventID,
+		Type:      event.Type,
+		Data:      p.harborEventToMap(event),
+		CreatedAt: time.Now(),
+		Retries:   0,
+	}
+
+	// Push to queue
+	if err := p.queue.Push(queueEvent); err != nil {
+		p.logger.Error("Failed to enqueue event",
+			zap.String("event_id", eventID),
+			zap.Error(err))
+		return fmt.Errorf("failed to enqueue event: %w", err)
+	}
+
+	p.logger.Info("Event enqueued for processing",
+		zap.String("event_id", eventID),
+		zap.String("event_type", event.Type))
+
+	return nil
+}
+
 // Process processes a Harbor webhook event with comprehensive error handling and retry logic
+// This method is used for synchronous processing (backward compatibility) and by the queue adapter
 func (p *HarborEventProcessor) Process(ctx context.Context, event *harbor.Event) error {
 	startTime := time.Now()
 	eventID := p.generateEventID(event)
@@ -453,24 +564,15 @@ func (p *HarborEventProcessor) sendNotificationsWithRetry(
 	var result *NotificationResult
 	var lastErr error
 
+	retryConfig := util.RetryConfig{
+		MaxAttempts:    p.config.Retry.MaxAttempts,
+		InitialBackoff: p.config.Retry.InitialBackoff,
+		MaxBackoff:     p.config.Retry.MaxBackoff,
+	}
+
 	for attempt := 0; attempt < p.config.Retry.MaxAttempts; attempt++ {
 		if attempt > 0 {
-			// Calculate exponential backoff with jitter
-			// #nosec G115 -- attempt is bounded by MaxAttempts, overflow is not possible
-			shift := uint(attempt - 1)
-			if shift > maxShiftBits {
-				shift = maxShiftBits // Prevent overflow
-			}
-			baseWaitTime := p.config.Retry.InitialBackoff * time.Duration(1<<shift)
-			if baseWaitTime > p.config.Retry.MaxBackoff {
-				baseWaitTime = p.config.Retry.MaxBackoff
-			}
-
-			// Add jitter (±25% of base wait time)
-			// #nosec G404 -- math/rand is sufficient for jitter calculation, crypto/rand not needed
-			jitterFactor := rand.Float64()*jitterMultiplier + jitterRangeMin
-			jitter := time.Duration(jitterFactor * float64(baseWaitTime))
-			waitTime := baseWaitTime + jitter
+			waitTime := util.CalculateBackoff(attempt, retryConfig)
 
 			p.logger.Info("Retrying notification send after backoff",
 				zap.Int("attempt", attempt),
@@ -521,56 +623,18 @@ func (p *HarborEventProcessor) retryOperation(
 	operationName string,
 	ctxData map[string]interface{},
 ) error {
-	var lastErr error
-
-	for attempt := 0; attempt < p.config.Retry.MaxAttempts; attempt++ {
-		if attempt > 0 {
-			// Calculate exponential backoff with jitter
-			// #nosec G115 -- attempt is bounded by MaxAttempts, overflow is not possible
-			shift := uint(attempt - 1)
-			if shift > maxShiftBits {
-				shift = maxShiftBits // Prevent overflow
-			}
-			baseWaitTime := p.config.Retry.InitialBackoff * time.Duration(1<<shift)
-			if baseWaitTime > p.config.Retry.MaxBackoff {
-				baseWaitTime = p.config.Retry.MaxBackoff
-			}
-
-			// Add jitter (±25% of base wait time)
-			// #nosec G404 -- math/rand is sufficient for jitter calculation, crypto/rand not needed
-			jitterFactor := rand.Float64()*jitterMultiplier + jitterRangeMin // -0.25 to +0.25
-			jitter := time.Duration(jitterFactor * float64(baseWaitTime))
-			waitTime := baseWaitTime + jitter
-
-			p.logger.Info("Retrying operation after backoff with jitter",
-				zap.String("operation", operationName),
-				zap.Int("attempt", attempt),
-				zap.Duration("wait_time", waitTime),
-				zap.Any("context", ctxData))
-
-			select {
-			case <-time.After(waitTime):
-			case <-ctx.Done():
-				return ctx.Err()
-			}
-		}
-
-		err := operation()
-		if err == nil {
-			return nil
-		}
-
-		lastErr = err
-		p.logger.Error("Operation failed, will retry",
-			zap.String("operation", operationName),
-			zap.Int("attempt", attempt+1),
-			zap.Error(err),
-			zap.Any("context", ctxData))
+	retryConfig := util.RetryConfig{
+		MaxAttempts:    p.config.Retry.MaxAttempts,
+		InitialBackoff: p.config.Retry.InitialBackoff,
+		MaxBackoff:     p.config.Retry.MaxBackoff,
 	}
 
-	wrapErr := fmt.Errorf("operation %s failed: %w", operationName, lastErr)
-	return errors.Wrapf(wrapErr, errors.ErrorTypeExternal, "operation_failed_after_retries",
-		"Operation %s failed after %d attempts", operationName, p.config.Retry.MaxAttempts)
+	err := util.RetryOperation(ctx, operation, retryConfig, operationName, p.logger, ctxData)
+	if err != nil {
+		return errors.Wrapf(err, errors.ErrorTypeExternal, "operation_failed_after_retries",
+			"Operation %s failed after %d attempts", operationName, p.config.Retry.MaxAttempts)
+	}
+	return nil
 }
 
 // extractHarborEvent extracts Harbor event data from the event
@@ -670,20 +734,136 @@ func (p *HarborEventProcessor) formatBody(
 	return body
 }
 
+// HarborEventAdapter adapts queue.Event to harbor.Event for processing
+type HarborEventAdapter struct {
+	harborProcessor *HarborEventProcessor
+}
+
+// Process processes a queue event by converting it to harbor.Event and calling the processor
+func (a *HarborEventAdapter) Process(ctx context.Context, event *Event) error {
+	// Convert queue.Event back to harbor.Event
+	harborEvent, err := a.mapToHarborEvent(event.Data)
+	if err != nil {
+		return fmt.Errorf("failed to convert queue event to harbor event: %w", err)
+	}
+
+	// Process using the harbor processor
+	return a.harborProcessor.Process(ctx, harborEvent)
+}
+
+// harborEventToMap converts harbor.Event to map for queue storage
+func (p *HarborEventProcessor) harborEventToMap(event *harbor.Event) map[string]interface{} {
+	data := make(map[string]interface{})
+	data["type"] = event.Type
+	data["occur_at"] = event.OccurAt
+	data["operator"] = event.Operator
+	data["event_data"] = event.EventData
+	return data
+}
+
+// mapToHarborEvent converts map back to harbor.Event
+func (a *HarborEventAdapter) mapToHarborEvent(data map[string]interface{}) (*harbor.Event, error) {
+	event := &harbor.Event{}
+
+	if typ, ok := data["type"].(string); ok {
+		event.Type = typ
+	} else {
+		return nil, fmt.Errorf("missing or invalid event type")
+	}
+
+	switch occurAt := data["occur_at"].(type) {
+	case int64:
+		event.OccurAt = occurAt
+	case float64:
+		event.OccurAt = int64(occurAt)
+	default:
+		return nil, fmt.Errorf("missing or invalid occur_at")
+	}
+
+	if operator, ok := data["operator"].(string); ok {
+		event.Operator = operator
+	}
+
+	if eventData, ok := data["event_data"].(map[string]interface{}); ok {
+		event.EventData = eventData
+	} else {
+		return nil, fmt.Errorf("missing or invalid event_data")
+	}
+
+	return event, nil
+}
+
 // IdempotencyManager handles idempotency for events
 type IdempotencyManager struct {
 	processedEvents map[string]time.Time
 	mu              sync.RWMutex
 	logger          *zap.Logger
 	ttl             time.Duration
+	cleanupInterval time.Duration
+	stopChan        chan struct{}
+	metrics         *obs.Metrics
 }
 
 // NewIdempotencyManager creates a new idempotency manager
-func NewIdempotencyManager(logger *zap.Logger, ttl time.Duration) *IdempotencyManager {
+func NewIdempotencyManager(logger *zap.Logger, ttl time.Duration, metrics *obs.Metrics) *IdempotencyManager {
+	// Cleanup interval is half of TTL to ensure timely cleanup
+	cleanupInterval := ttl / IdempotencyCleanupDivisor
+	if cleanupInterval < 1*time.Hour {
+		cleanupInterval = 1 * time.Hour // Minimum 1 hour
+	}
+
 	return &IdempotencyManager{
 		processedEvents: make(map[string]time.Time),
 		logger:          logger,
 		ttl:             ttl,
+		cleanupInterval: cleanupInterval,
+		stopChan:        make(chan struct{}),
+		metrics:         metrics,
+	}
+}
+
+// Start starts the periodic cleanup goroutine
+func (i *IdempotencyManager) Start() {
+	go i.cleanupLoop()
+	i.logger.Info("IdempotencyManager cleanup started",
+		zap.Duration("cleanup_interval", i.cleanupInterval),
+		zap.Duration("ttl", i.ttl))
+}
+
+// Stop stops the periodic cleanup goroutine
+func (i *IdempotencyManager) Stop() {
+	close(i.stopChan)
+	i.logger.Info("IdempotencyManager cleanup stopped")
+}
+
+// cleanupLoop runs periodic cleanup
+func (i *IdempotencyManager) cleanupLoop() {
+	ticker := time.NewTicker(i.cleanupInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			removed := i.Cleanup()
+			if i.metrics != nil {
+				i.updateMetrics()
+			}
+			if removed > 0 {
+				i.logger.Debug("IdempotencyManager cleanup completed",
+					zap.Int("removed_events", removed),
+					zap.Int("remaining_events", i.Size()))
+			}
+		case <-i.stopChan:
+			return
+		}
+	}
+}
+
+// updateMetrics updates metrics for idempotency cache size
+func (i *IdempotencyManager) updateMetrics() {
+	if i.metrics != nil && i.metrics.IdempotencyCacheSizeGauge != nil {
+		size := i.Size()
+		i.metrics.IdempotencyCacheSizeGauge.Set(float64(size))
 	}
 }
 
@@ -714,15 +894,25 @@ func (i *IdempotencyManager) MarkProcessed(eventID string) {
 	i.processedEvents[eventID] = time.Now()
 }
 
-// Cleanup removes old processed events
-func (i *IdempotencyManager) Cleanup() {
+// Cleanup removes old processed events and returns the number of removed events
+func (i *IdempotencyManager) Cleanup() int {
 	i.mu.Lock()
 	defer i.mu.Unlock()
 
 	now := time.Now()
+	removed := 0
 	for eventID, processedTime := range i.processedEvents {
 		if now.Sub(processedTime) > i.ttl {
 			delete(i.processedEvents, eventID)
+			removed++
 		}
 	}
+	return removed
+}
+
+// Size returns the current number of processed events in the cache
+func (i *IdempotencyManager) Size() int {
+	i.mu.RLock()
+	defer i.mu.RUnlock()
+	return len(i.processedEvents)
 }
