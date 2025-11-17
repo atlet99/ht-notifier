@@ -22,16 +22,22 @@ const (
 	jitterRangeMin   = -0.25
 	jitterRangeMax   = 0.25
 	jitterMultiplier = 0.5
+	// IdempotencyTTL is the time-to-live for processed events in idempotency manager
+	IdempotencyTTL = 24 * time.Hour
+	// maxShiftBits is the maximum number of bits to shift for exponential backoff
+	// This prevents integer overflow (2^31 is the safe limit for int32)
+	maxShiftBits = 31
 )
 
 // HarborEventProcessor processes Harbor webhook events
 type HarborEventProcessor struct {
-	harborClient *harbor.Client
-	notifiers    []notif.Notifier
-	logger       *zap.Logger
-	metrics      *obs.Metrics
-	templates    *notif.MessageTemplates
-	config       *config.ProcessingConfig
+	harborClient   *harbor.Client
+	notifiers      []notif.Notifier
+	logger         *zap.Logger
+	metrics        *obs.Metrics
+	templates      *notif.MessageTemplates
+	config         *config.ProcessingConfig
+	idempotencyMgr *IdempotencyManager
 }
 
 // NewHarborEventProcessor creates a new Harbor event processor
@@ -41,26 +47,50 @@ func NewHarborEventProcessor(harborClient *harbor.Client, notifiers []notif.Noti
 	templates *notif.MessageTemplates,
 	procConfig *config.ProcessingConfig,
 ) *HarborEventProcessor {
+	// Create idempotency manager with configured TTL
+	idempotencyMgr := NewIdempotencyManager(logger, IdempotencyTTL)
+
 	return &HarborEventProcessor{
-		harborClient: harborClient,
-		notifiers:    notifiers,
-		logger:       logger,
-		metrics:      metrics,
-		templates:    templates,
-		config:       procConfig,
+		harborClient:   harborClient,
+		notifiers:      notifiers,
+		logger:         logger,
+		metrics:        metrics,
+		templates:      templates,
+		config:         procConfig,
+		idempotencyMgr: idempotencyMgr,
 	}
+}
+
+// generateEventID generates a unique ID for an event based on its properties
+func (p *HarborEventProcessor) generateEventID(event *harbor.Event) string {
+	// Create a unique ID from event type, timestamp, and operator
+	// This ensures that duplicate events are detected even if they arrive multiple times
+	return fmt.Sprintf("%s:%d:%s", event.Type, event.OccurAt, event.Operator)
 }
 
 // Process processes a Harbor webhook event with comprehensive error handling and retry logic
 func (p *HarborEventProcessor) Process(ctx context.Context, event *harbor.Event) error {
 	startTime := time.Now()
+	eventID := p.generateEventID(event)
+
 	p.logger.Info("Processing Harbor event",
-		zap.Int64("event_id", event.OccurAt),
+		zap.String("event_id", eventID),
+		zap.Int64("occur_at", event.OccurAt),
 		zap.String("event_type", event.Type))
+
+	// Check if event has already been processed (idempotency check)
+	if p.idempotencyMgr.IsProcessed(eventID) {
+		p.logger.Info("Event already processed, skipping",
+			zap.String("event_id", eventID),
+			zap.String("event_type", event.Type))
+		p.metrics.RecordHarborEvent("harbor_event", "duplicate", 0)
+		return nil
+	}
 
 	// Create error context for better error tracking
 	errorContext := map[string]interface{}{
-		"event_id":   event.OccurAt,
+		"event_id":   eventID,
+		"occur_at":   event.OccurAt,
 		"event_type": event.Type,
 		"operator":   event.Operator,
 	}
@@ -69,7 +99,8 @@ func (p *HarborEventProcessor) Process(ctx context.Context, event *harbor.Event)
 	harborEvent, err := p.extractEventDataWithRetry(ctx, event, errorContext)
 	if err != nil {
 		p.metrics.RecordProcessingError("extract_event_data")
-		return errors.Wrapf(err, errors.ErrorTypeExternal, "extract_event_data_failed",
+		wrapErr := fmt.Errorf("failed to extract event data: %w", err)
+		return errors.Wrapf(wrapErr, errors.ErrorTypeExternal, "extract_event_data_failed",
 			"Failed to extract event data after retries")
 	}
 
@@ -77,14 +108,16 @@ func (p *HarborEventProcessor) Process(ctx context.Context, event *harbor.Event)
 	scanOverview, err := p.getScanOverviewWithRetry(ctx, harborEvent, errorContext)
 	if err != nil {
 		p.metrics.RecordProcessingError("get_scan_overview")
-		return errors.Wrapf(err, errors.ErrorTypeExternal, "get_scan_overview_failed",
+		wrapErr := fmt.Errorf("failed to get scan overview: %w", err)
+		return errors.Wrapf(wrapErr, errors.ErrorTypeExternal, "get_scan_overview_failed",
 			"Failed to get scan overview after retries")
 	}
 
 	repo, err := harborEvent.GetRepository()
 	if err != nil {
 		p.metrics.RecordProcessingError("get_repository")
-		return errors.Wrapf(err, errors.ErrorTypeExternal, "get_repository_failed",
+		wrapErr := fmt.Errorf("failed to extract repository: %w", err)
+		return errors.Wrapf(wrapErr, errors.ErrorTypeExternal, "get_repository_failed",
 			"Failed to extract repository information")
 	}
 
@@ -102,22 +135,43 @@ func (p *HarborEventProcessor) Process(ctx context.Context, event *harbor.Event)
 	msg, err := p.createNotificationMessageWithRetry(ctx, harborEvent, scanOverview, errorContext)
 	if err != nil {
 		p.metrics.RecordProcessingError("create_notification_message")
-		return errors.Wrapf(err, errors.ErrorTypeExternal, "create_notification_message_failed",
+		wrapErr := fmt.Errorf("failed to create notification message: %w", err)
+		return errors.Wrapf(wrapErr, errors.ErrorTypeExternal, "create_notification_message_failed",
 			"Failed to create notification message after retries")
 	}
 
 	// Send notifications with retry logic and circuit breaker
-	if err := p.sendNotificationsWithRetry(ctx, msg, errorContext); err != nil {
+	result, err := p.sendNotificationsWithRetry(ctx, msg, errorContext)
+	if err != nil {
 		p.metrics.RecordProcessingError("send_notifications")
 		return errors.Wrapf(err, errors.ErrorTypeExternal, "send_notifications_failed",
 			"Failed to send notifications after retries")
 	}
 
+	// Handle partial failures - log as warning if some succeeded
+	if result.HasFailures() {
+		if len(result.Successful) > 0 {
+			// Partial success - log as warning, don't fail the entire operation
+			p.logger.Warn("Some notifications failed, but processing continues",
+				zap.Int("successful", len(result.Successful)),
+				zap.Int("failed", len(result.Failed)),
+				zap.Strings("successful_notifiers", result.Successful))
+		} else {
+			// Complete failure - return error
+			p.metrics.RecordProcessingError("send_notifications")
+			return errors.NewAppErrorf(errors.ErrorTypeExternal, "all_notifications_failed",
+				"All %d notification attempts failed", len(result.Failed))
+		}
+	}
+
+	// Mark event as processed (idempotency)
+	p.idempotencyMgr.MarkProcessed(eventID)
+
 	// Record successful processing
 	processingTime := time.Since(startTime)
 	p.metrics.ProcessingDurationHistogram.WithLabelValues(event.Type).Observe(processingTime.Seconds())
 	p.logger.Info("Harbor event processed successfully",
-		zap.Int64("event_id", event.OccurAt),
+		zap.String("event_id", eventID),
 		zap.Duration("processing_time", processingTime))
 
 	return nil
@@ -303,9 +357,43 @@ func (p *HarborEventProcessor) createNotificationMessageWithRetry(
 	return msg, nil
 }
 
-// sendNotificationsToAll sends notifications to all notifiers
-func (p *HarborEventProcessor) sendNotificationsToAll(ctx context.Context, msg *notif.Message) error {
-	var errs []error
+// NotificationResult represents the result of sending notifications to multiple notifiers
+type NotificationResult struct {
+	Successful []string
+	Failed     []NotificationFailure
+}
+
+// NotificationFailure represents a failed notification attempt
+type NotificationFailure struct {
+	Notifier string
+	Error    error
+}
+
+// Error implements the error interface for NotificationResult
+func (nr *NotificationResult) Error() string {
+	if len(nr.Failed) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("partial failures: %d successful, %d failed", len(nr.Successful), len(nr.Failed))
+}
+
+// HasFailures returns true if there are any failures
+func (nr *NotificationResult) HasFailures() bool {
+	return len(nr.Failed) > 0
+}
+
+// IsCompleteSuccess returns true if all notifications were successful
+func (nr *NotificationResult) IsCompleteSuccess() bool {
+	return len(nr.Failed) == 0 && len(nr.Successful) > 0
+}
+
+// sendNotificationsToAll sends notifications to all notifiers and returns detailed results
+func (p *HarborEventProcessor) sendNotificationsToAll(ctx context.Context, msg *notif.Message) *NotificationResult {
+	result := &NotificationResult{
+		Successful: make([]string, 0),
+		Failed:     make([]NotificationFailure, 0),
+	}
+
 	for _, notifier := range p.notifiers {
 		notifierName := notifier.Name()
 
@@ -313,21 +401,33 @@ func (p *HarborEventProcessor) sendNotificationsToAll(ctx context.Context, msg *
 
 		err := notifier.Send(ctx, msg)
 		if err != nil {
+			// Use fmt.Errorf with %w to preserve error chain
+			wrappedErr := fmt.Errorf("failed to send notification to %s: %w", notifierName, err)
 			p.logger.Error("Failed to send notification",
 				zap.String("notifier", notifierName),
-				zap.Error(err))
-			errs = append(errs, fmt.Errorf("%s: %w", notifierName, err))
+				zap.Error(wrappedErr))
+			result.Failed = append(result.Failed, NotificationFailure{
+				Notifier: notifierName,
+				Error:    wrappedErr,
+			})
+			p.metrics.NotificationsSentTotal.WithLabelValues(notifierName, "failure").Inc()
 		} else {
 			p.logger.Info("Notification sent successfully", zap.String("notifier", notifierName))
+			result.Successful = append(result.Successful, notifierName)
 			p.metrics.NotificationsSentTotal.WithLabelValues(notifierName, "success").Inc()
 		}
 	}
 
-	if len(errs) > 0 {
-		return fmt.Errorf("partial failures: %v", errs)
+	// Log partial failures as warning, not error
+	if result.HasFailures() && len(result.Successful) > 0 {
+		p.logger.Warn("Partial notification failures",
+			zap.Int("successful", len(result.Successful)),
+			zap.Int("failed", len(result.Failed)),
+			zap.Strings("successful_notifiers", result.Successful),
+			zap.Any("failed_notifiers", result.Failed))
 	}
 
-	return nil
+	return result
 }
 
 // sendNotificationsWithRetry sends notifications with retry logic and circuit breaker
@@ -335,12 +435,69 @@ func (p *HarborEventProcessor) sendNotificationsWithRetry(
 	ctx context.Context,
 	msg *notif.Message,
 	ctxData map[string]interface{},
-) error {
-	operation := func() error {
-		return p.sendNotificationsToAll(ctx, msg)
+) (*NotificationResult, error) {
+	var result *NotificationResult
+	var lastErr error
+
+	for attempt := 0; attempt < p.config.Retry.MaxAttempts; attempt++ {
+		if attempt > 0 {
+			// Calculate exponential backoff with jitter
+			// #nosec G115 -- attempt is bounded by MaxAttempts, overflow is not possible
+			shift := uint(attempt - 1)
+			if shift > maxShiftBits {
+				shift = maxShiftBits // Prevent overflow
+			}
+			baseWaitTime := p.config.Retry.InitialBackoff * time.Duration(1<<shift)
+			if baseWaitTime > p.config.Retry.MaxBackoff {
+				baseWaitTime = p.config.Retry.MaxBackoff
+			}
+
+			// Add jitter (±25% of base wait time)
+			// #nosec G404 -- math/rand is sufficient for jitter calculation, crypto/rand not needed
+			jitterFactor := rand.Float64()*jitterMultiplier + jitterRangeMin
+			jitter := time.Duration(jitterFactor * float64(baseWaitTime))
+			waitTime := baseWaitTime + jitter
+
+			p.logger.Info("Retrying notification send after backoff",
+				zap.Int("attempt", attempt),
+				zap.Duration("wait_time", waitTime),
+				zap.Any("context", ctxData))
+
+			select {
+			case <-time.After(waitTime):
+			case <-ctx.Done():
+				return nil, fmt.Errorf("context canceled: %w", ctx.Err())
+			}
+		}
+
+		result = p.sendNotificationsToAll(ctx, msg)
+
+		// If all succeeded, return success
+		if result.IsCompleteSuccess() {
+			return result, nil
+		}
+
+		// If some succeeded, we can return partial success (don't retry)
+		if len(result.Successful) > 0 {
+			return result, nil
+		}
+
+		// All failed - prepare error for retry
+		if len(result.Failed) > 0 {
+			lastErr = fmt.Errorf("all notifications failed: %w", result.Failed[0].Error)
+		} else {
+			lastErr = fmt.Errorf("no notifiers configured")
+		}
+
+		p.logger.Error("All notifications failed, will retry",
+			zap.Int("attempt", attempt+1),
+			zap.Error(lastErr),
+			zap.Any("context", ctxData))
 	}
 
-	return p.retryOperation(ctx, operation, "send_notifications", ctxData)
+	// All retries exhausted
+	return result, errors.Wrapf(lastErr, errors.ErrorTypeExternal, "notifications_failed_after_retries",
+		"Failed to send notifications after %d attempts", p.config.Retry.MaxAttempts)
 }
 
 // retryOperation executes an operation with retry logic and jitter
@@ -356,7 +513,11 @@ func (p *HarborEventProcessor) retryOperation(
 		if attempt > 0 {
 			// Calculate exponential backoff with jitter
 			// #nosec G115 -- attempt is bounded by MaxAttempts, overflow is not possible
-			baseWaitTime := p.config.Retry.InitialBackoff * time.Duration(1<<uint(attempt-1))
+			shift := uint(attempt - 1)
+			if shift > maxShiftBits {
+				shift = maxShiftBits // Prevent overflow
+			}
+			baseWaitTime := p.config.Retry.InitialBackoff * time.Duration(1<<shift)
 			if baseWaitTime > p.config.Retry.MaxBackoff {
 				baseWaitTime = p.config.Retry.MaxBackoff
 			}
@@ -393,7 +554,8 @@ func (p *HarborEventProcessor) retryOperation(
 			zap.Any("context", ctxData))
 	}
 
-	return errors.Wrapf(lastErr, errors.ErrorTypeExternal, "operation_failed_after_retries",
+	wrapErr := fmt.Errorf("operation %s failed: %w", operationName, lastErr)
+	return errors.Wrapf(wrapErr, errors.ErrorTypeExternal, "operation_failed_after_retries",
 		"Operation %s failed after %d attempts", operationName, p.config.Retry.MaxAttempts)
 }
 

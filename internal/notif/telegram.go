@@ -17,12 +17,11 @@ import (
 
 // Telegram implements the Notifier interface for Telegram using go-telegram/bot
 type Telegram struct {
+	*BaseNotifier
 	bot           *bot.Bot
 	chatID        int64
-	limiter       RateLimiter
 	config        config.TelegramConfig
 	messageFormat MessageFormat
-	metrics       NotifierMetrics
 }
 
 // MessageFormat defines the format for Telegram messages
@@ -94,12 +93,11 @@ func NewTelegram(cfg *config.TelegramConfig, limiter RateLimiter) (*Telegram, er
 	}
 
 	return &Telegram{
+		BaseNotifier:  NewBaseNotifier("telegram", limiter),
 		bot:           b,
 		chatID:        chatID,
-		limiter:       limiter,
 		config:        *cfg,
 		messageFormat: messageFormat,
-		metrics:       NotifierMetrics{},
 	}, nil
 }
 
@@ -108,11 +106,8 @@ func (t *Telegram) Send(ctx context.Context, msg *Message) error {
 	start := time.Now()
 
 	// Apply rate limiting if configured
-	if t.limiter != nil {
-		if err := t.limiter.Wait(ctx); err != nil {
-			t.recordFailure(err)
-			return fmt.Errorf("rate limiter wait failed: %w", err)
-		}
+	if err := t.ApplyRateLimit(ctx); err != nil {
+		return err
 	}
 
 	// Format message text
@@ -142,38 +137,17 @@ func (t *Telegram) Send(ctx context.Context, msg *Message) error {
 	duration := time.Since(start)
 
 	if err != nil {
-		t.recordFailure(err)
+		t.RecordFailure(err)
 		return fmt.Errorf("failed to send Telegram message: %w", err)
 	}
 
-	t.recordSuccess(duration)
+	t.RecordSuccess(duration)
 	return nil
 }
 
 // Name returns the name of this notifier
 func (t *Telegram) Name() string {
-	return "telegram"
-}
-
-// GetMetrics returns the metrics for this notifier
-func (t *Telegram) GetMetrics() *NotifierMetrics {
-	return &t.metrics
-}
-
-// recordSuccess records a successful notification
-func (t *Telegram) recordSuccess(duration time.Duration) {
-	t.metrics.TotalSent++
-	t.metrics.LastSent = time.Now()
-	t.metrics.LastDuration = duration
-	t.metrics.AvgDuration = time.Duration(
-		(int64(t.metrics.AvgDuration)*t.metrics.TotalSent + int64(duration)) /
-			(t.metrics.TotalSent + 1))
-}
-
-// recordFailure records a failed notification
-func (t *Telegram) recordFailure(_ error) {
-	t.metrics.TotalFailed++
-	t.metrics.LastFailed = time.Now()
+	return t.name
 }
 
 // formatMessage formats the message for Telegram

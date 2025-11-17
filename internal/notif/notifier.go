@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"sync"
 	"time"
+
+	"golang.org/x/time/rate"
 )
 
 const (
@@ -14,6 +16,7 @@ const (
 	defaultRetryMaxBackoff                = 5 * time.Minute
 	defaultRetryJitter                    = 0.2
 	defaultTokenBucketWaitInterval        = 100 * time.Millisecond
+	secondsPerMinute                      = 60.0
 )
 
 // Message represents a notification message
@@ -344,57 +347,31 @@ func (r *RetryNotifier) Name() string {
 	return r.target.Name()
 }
 
-// NewRateLimiter creates a new rate limiter
-func NewRateLimiter(rate, burst int) RateLimiter {
-	return &tokenBucket{
-		rate:   rate,
-		burst:  burst,
-		tokens: burst,
-		last:   time.Now(),
+// NewRateLimiter creates a new rate limiter using golang.org/x/time/rate
+// rate is requests per minute, burst is the maximum burst size
+func NewRateLimiter(ratePerMinute, burst int) RateLimiter {
+	// Convert rate per minute to rate per second
+	ratePerSecond := float64(ratePerMinute) / secondsPerMinute
+	limiter := rate.NewLimiter(rate.Limit(ratePerSecond), burst)
+	return &rateLimiterWrapper{
+		limiter: limiter,
 	}
 }
 
-// tokenBucket implements a simple token bucket rate limiter
-type tokenBucket struct {
-	rate   int
-	burst  int
-	tokens int
-	last   time.Time
-	mu     chan struct{} // mutex
+// rateLimiterWrapper wraps golang.org/x/time/rate.Limiter to implement RateLimiter interface
+type rateLimiterWrapper struct {
+	limiter *rate.Limiter
+	mu      sync.Mutex
 }
 
-func (tb *tokenBucket) Allow() bool {
-	tb.mu <- struct{}{}
-	defer func() { <-tb.mu }()
-
-	now := time.Now()
-	elapsed := now.Sub(tb.last)
-	tb.last = now
-
-	// Add tokens based on elapsed time
-	tb.tokens += int(elapsed.Seconds()) * tb.rate
-	if tb.tokens > tb.burst {
-		tb.tokens = tb.burst
-	}
-
-	if tb.tokens > 0 {
-		tb.tokens--
-		return true
-	}
-
-	return false
+func (rl *rateLimiterWrapper) Allow() bool {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+	return rl.limiter.Allow()
 }
 
-func (tb *tokenBucket) Wait(ctx context.Context) error {
-	for {
-		if tb.Allow() {
-			return nil
-		}
-
-		select {
-		case <-time.After(defaultTokenBucketWaitInterval):
-		case <-ctx.Done():
-			return ctx.Err()
-		}
-	}
+func (rl *rateLimiterWrapper) Wait(ctx context.Context) error {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+	return rl.limiter.Wait(ctx)
 }

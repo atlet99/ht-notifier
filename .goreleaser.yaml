@@ -1,0 +1,194 @@
+# GoReleaser config for ht-notifier
+
+# Version is read from .release-version into RELEASE_VERSION
+version: 2
+
+project_name: ht-notifier
+
+builds:
+  - id: server
+    binary: ht-notifier
+    main: ./cmd/server
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -extldflags "-static"
+      - -X 'github.com/atlet99/ht-notifier/internal/version.Version={{ .Env.RELEASE_VERSION }}'
+      - -X 'github.com/atlet99/ht-notifier/internal/version.Commit={{ .Commit }}'
+      - -X 'github.com/atlet99/ht-notifier/internal/version.Date={{ .Date }}'
+      - -s
+      - -w
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    goarm:
+      - "7"
+    ignore:
+      - goos: darwin
+        goarch: arm64
+        goarm: "7"
+
+archives:
+  - id: default
+    # Includes built binaries + files below
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}{{ if .Arm }}v{{ .Arm }}{{ end }}"
+    files:
+      - README.md
+      - LICENSE
+      - config.example.yaml
+
+checksum:
+  name_template: "{{ .ProjectName }}_{{ .Version }}_checksums.txt"
+  algorithm: sha256
+
+signs:
+  - id: checksum
+    artifacts: checksum
+    signature: "${artifact}.sig"
+    cmd: gpg
+    args:
+      - "--batch"
+      - "--pinentry-mode=loopback"
+      - "--passphrase={{ .Env.GPG_PASSPHRASE }}"
+      - "--default-key={{ .Env.GPG_FINGERPRINT }}"
+      - "--output"
+      - "${signature}"
+      - "--detach-sign"
+      - "${artifact}"
+
+binary_signs:
+  - id: binaries
+    artifacts: binary
+    signature: "{{ .ArtifactName }}_{{ .Os }}_{{ .Arch }}{{ if .Arm }}v{{ .Arm }}{{ end }}.sig"
+    cmd: gpg
+    args:
+      - "--batch"
+      - "--pinentry-mode=loopback"
+      - "--passphrase={{ .Env.GPG_PASSPHRASE }}"
+      - "--default-key={{ .Env.GPG_FINGERPRINT }}"
+      - "--output"
+      - "${signature}"
+      - "--detach-sign"
+      - "${artifact}"
+
+release:
+  mode: replace
+  header: |
+    ## ht-notifier {{ .Tag }}
+
+    Release {{ .Tag }} of ht-notifier - Harbor webhook event notifier for Telegram, Slack, Mattermost, and Email.
+
+    ### Docker Images (signed with Cosign)
+
+    Docker images are available at GitHub Container Registry (ghcr.io). All images are signed with Cosign:
+
+    - `ht-notifier:{{ .Version }}` and `ht-notifier:latest`
+
+    Verify image signatures using the public key from the repository:
+
+    ```bash
+    export USERNAME=<your-github-username>
+    cosign login ghcr.io -u "$USERNAME"
+    cosign verify --key cosign.pub ghcr.io/{{ .Env.DOCKER_REPO_PATH }}/ht-notifier:{{ .Version }}
+    ```
+
+    The `cosign.pub` file is available in the repository root.
+
+    ### Binaries (signed with GPG)
+
+    This release includes the following binaries, signed with GPG:
+
+    - `ht-notifier` - Harbor webhook event notifier server
+
+    ### Installation
+
+    Download the appropriate binary or archive for your platform from the assets below.
+
+    ### Verification
+
+    Verify checksums:
+
+    ```bash
+    sha256sum --check {{ .ProjectName }}_{{ .Version }}_checksums.txt
+    ```
+
+    Verify checksum signature:
+
+    ```bash
+    gpg --verify {{ .ProjectName }}_{{ .Version }}_checksums.txt.sig {{ .ProjectName }}_{{ .Version }}_checksums.txt
+    ```
+
+    Verify binary signatures:
+
+    ```bash
+    # For Linux amd64
+    gpg --verify ht-notifier_linux_amd64.sig ht-notifier
+
+    # For other platforms, replace linux_amd64 with your platform (e.g., darwin_arm64v8, windows_amd64)
+    ```
+  footer: |
+    **Full Changelog**: {{ .Env.GITHUB_REPO_URL }}/compare/{{ .PreviousTag }}...{{ .Tag }}
+
+changelog:
+  sort: asc
+  use: github
+  format: "{{ .SHA }}: {{ .Message }}{{ with .AuthorUsername }} (@{{ . }}){{ end }}"
+  filters:
+    exclude:
+      - "^test:"
+      - "^test\\("
+      - "^chore: update$"
+      - "^chore: docs$"
+      - "^docs: update$"
+      - "^chore: schema$"
+      - "^chore: typo$"
+      - "^chore: auto-update generated files$"
+      - "^chore: update schema$"
+      - "^chore: schema update$"
+      - "^chore\\(deps\\): "
+      - "^(build|ci): "
+      - "merge conflict"
+      - Merge pull request
+      - Merge remote-tracking branch
+      - Merge branch
+      - go mod tidy
+  groups:
+    - title: "New Features"
+      regexp: '^.*?(\[ADD\]|\[FEATURE\]|\[INIT\]|feat(\(.+\))?!?:|feature(\(.+\))?!?:|add(\(.+\))?!?:|init(\(.+\))?!?:|\[feature\/.+\]).*$'
+      order: 100
+    - title: "Performance improvements"
+      regexp: '^.*?(\[perf\]|perf(\(.+\))?!?:).*$'
+      order: 120
+    - title: "Security updates"
+      regexp: '^.*?sec(\(.+\))?!?:.+$'
+      order: 150
+    - title: "Bug fixes"
+      regexp: '^.*?(\[FIX\]|\[BUGFIX\]|fix(\(.+\))?!?:|bugfix(\(.+\))?!?:).*$'
+      order: 200
+    - title: "Refactoring"
+      regexp: '^.*?(\[REFACTOR\]|refactor(\(.+\))?!?:).*$'
+      order: 250
+    - title: "Updates and Enhancements"
+      regexp: '^.*?\[UPD\].*$'
+      order: 300
+    - title: "Documentation updates"
+      regexp: '^.*?(\[DOCS\]|docs?(\(.+\))?!?:).*$'
+      order: 400
+    - title: "Tests"
+      regexp: '^.*?(\[TEST\]|test(\(.+\))?!?:).*$'
+      order: 450
+    - title: "CI and Build"
+      regexp: '^.*?(\[CI\]|\[CHORE\]|\[LINT\]|ci(\(.+\))?!?:|build(\(.+\))?!?:|chore(\(.+\))?!?:|lint(\(.+\))?!?:).*$'
+      order: 500
+    - title: "Dependencies"
+      regexp: '^.*?Bump .*$'
+      order: 600
+    - title: "Other work"
+      order: 9999
+
