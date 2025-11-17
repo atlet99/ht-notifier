@@ -22,10 +22,9 @@ const (
 
 // Slack implements the Notifier interface for Slack notifications
 type Slack struct {
+	*BaseNotifier
 	api         *slack.Client
 	slackConfig config.SlackConfig
-	limiter     RateLimiter
-	metrics     NotifierMetrics
 }
 
 // NewSlack creates a new Slack notifier
@@ -44,10 +43,9 @@ func NewSlack(cfg *config.SlackConfig, limiter RateLimiter) (*Slack, error) {
 	api := slack.New(validatedCfg.Token, slack.OptionDebug(validatedCfg.Debug))
 
 	return &Slack{
-		api:         api,
-		slackConfig: validatedCfg,
-		limiter:     limiter,
-		metrics:     NotifierMetrics{},
+		BaseNotifier: NewBaseNotifier("slack", limiter),
+		api:          api,
+		slackConfig:  validatedCfg,
 	}, nil
 }
 
@@ -56,11 +54,8 @@ func (s *Slack) Send(ctx context.Context, msg *Message) error {
 	start := time.Now()
 
 	// Apply rate limiting if configured
-	if s.limiter != nil {
-		if err := s.limiter.Wait(ctx); err != nil {
-			s.recordFailure(err)
-			return fmt.Errorf("rate limiter wait failed: %w", err)
-		}
+	if err := s.ApplyRateLimit(ctx); err != nil {
+		return err
 	}
 
 	// Format the message for Slack
@@ -81,7 +76,7 @@ func (s *Slack) Send(ctx context.Context, msg *Message) error {
 	duration := time.Since(start)
 
 	if err != nil {
-		s.recordFailure(err)
+		s.RecordFailure(err)
 		return fmt.Errorf("failed to send Slack message: %w", err)
 	}
 
@@ -90,17 +85,15 @@ func (s *Slack) Send(ctx context.Context, msg *Message) error {
 		fmt.Printf("Slack message sent to channel %s at %s: %s\n", channelID, timestamp, formattedMsg)
 	}
 
-	s.recordSuccess(duration)
+	s.RecordSuccess(duration)
 	return nil
 }
 
 // ValidateToken validates the Slack token and checks permissions
 func (s *Slack) ValidateToken(ctx context.Context) error {
 	// Apply rate limiting if configured
-	if s.limiter != nil {
-		if err := s.limiter.Wait(ctx); err != nil {
-			return fmt.Errorf("rate limiter wait failed: %w", err)
-		}
+	if err := s.ApplyRateLimit(ctx); err != nil {
+		return err
 	}
 
 	// Test the token by calling auth.test
@@ -120,10 +113,8 @@ func (s *Slack) ValidateToken(ctx context.Context) error {
 // GetUserInfo retrieves user information for the authenticated token
 func (s *Slack) GetUserInfo(ctx context.Context) (*slack.User, error) {
 	// Apply rate limiting if configured
-	if s.limiter != nil {
-		if err := s.limiter.Wait(ctx); err != nil {
-			return nil, fmt.Errorf("rate limiter wait failed: %w", err)
-		}
+	if err := s.ApplyRateLimit(ctx); err != nil {
+		return nil, err
 	}
 
 	// Get user info
@@ -143,10 +134,8 @@ func (s *Slack) GetUserInfo(ctx context.Context) (*slack.User, error) {
 // GetBotInfo retrieves bot information for the authenticated token
 func (s *Slack) GetBotInfo(ctx context.Context) (*slack.Bot, error) {
 	// Apply rate limiting if configured
-	if s.limiter != nil {
-		if err := s.limiter.Wait(ctx); err != nil {
-			return nil, fmt.Errorf("rate limiter wait failed: %w", err)
-		}
+	if err := s.ApplyRateLimit(ctx); err != nil {
+		return nil, err
 	}
 
 	// Get bot info
@@ -218,10 +207,8 @@ func (s *Slack) RefreshToken(ctx context.Context, _ string) error {
 // GetChannelInfo retrieves information about a channel
 func (s *Slack) GetChannelInfo(ctx context.Context, channelID string) (*slack.Channel, error) {
 	// Apply rate limiting if configured
-	if s.limiter != nil {
-		if err := s.limiter.Wait(ctx); err != nil {
-			return nil, fmt.Errorf("rate limiter wait failed: %w", err)
-		}
+	if err := s.ApplyRateLimit(ctx); err != nil {
+		return nil, err
 	}
 
 	channelInfo, err := s.api.GetConversationInfoContext(ctx, &slack.GetConversationInfoInput{
@@ -294,10 +281,8 @@ func (s *Slack) AddReaction(ctx context.Context, channelID, timestamp, emoji str
 // GetThreadHistory retrieves message history from a thread
 func (s *Slack) GetThreadHistory(ctx context.Context, channelID, threadTS string) ([]slack.Message, error) {
 	// Apply rate limiting if configured
-	if s.limiter != nil {
-		if err := s.limiter.Wait(ctx); err != nil {
-			return nil, fmt.Errorf("rate limiter wait failed: %w", err)
-		}
+	if err := s.ApplyRateLimit(ctx); err != nil {
+		return nil, err
 	}
 
 	history, err := s.api.GetConversationHistoryContext(ctx, &slack.GetConversationHistoryParameters{
@@ -316,28 +301,7 @@ func (s *Slack) GetThreadHistory(ctx context.Context, channelID, threadTS string
 
 // Name returns the name of this notifier
 func (s *Slack) Name() string {
-	return "slack"
-}
-
-// GetMetrics returns the metrics for this notifier
-func (s *Slack) GetMetrics() *NotifierMetrics {
-	return &s.metrics
-}
-
-// recordSuccess records a successful notification
-func (s *Slack) recordSuccess(duration time.Duration) {
-	s.metrics.TotalSent++
-	s.metrics.LastSent = time.Now()
-	s.metrics.LastDuration = duration
-	s.metrics.AvgDuration = time.Duration(
-		(int64(s.metrics.AvgDuration)*s.metrics.TotalSent + int64(duration)) /
-			(s.metrics.TotalSent + 1))
-}
-
-// recordFailure records a failed notification
-func (s *Slack) recordFailure(_ error) {
-	s.metrics.TotalFailed++
-	s.metrics.LastFailed = time.Now()
+	return s.name
 }
 
 // formatMessage formats the message according to Slack configuration

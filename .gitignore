@@ -52,3 +52,6 @@ slack_api_extractor.go
 config.yaml
 config.yml
 *-config.yaml
+
+# Dist
+dist/

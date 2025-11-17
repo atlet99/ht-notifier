@@ -10,10 +10,18 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"time"
 
 	"go.uber.org/zap"
 
 	"github.com/atlet99/ht-notifier/internal/config"
+)
+
+const (
+	// Connection pooling constants
+	defaultMaxIdleConns        = 100
+	defaultMaxIdleConnsPerHost = 10
+	defaultIdleConnTimeout     = 90 * time.Second
 )
 
 // Client represents the Harbor API client
@@ -33,16 +41,23 @@ func NewClient(cfg config.HarborConfig, httpClient *http.Client, logger *zap.Log
 		return nil, fmt.Errorf("invalid base URL: %w", err)
 	}
 
-	// Configure HTTP client
+	// Configure HTTP client with connection pooling
 	if httpClient == nil {
-		httpClient = &http.Client{
-			Timeout: cfg.Timeout,
-			Transport: &http.Transport{
-				TLSClientConfig: &tls.Config{
-					// #nosec G402 -- InsecureSkipVerify is configurable and may be needed for self-signed certs
-					InsecureSkipVerify: cfg.InsecureSkipVerify,
-				},
+		transport := &http.Transport{
+			TLSClientConfig: &tls.Config{
+				// #nosec G402 -- InsecureSkipVerify is configurable and may be needed for self-signed certs
+				InsecureSkipVerify: cfg.InsecureSkipVerify,
 			},
+			// Connection pooling settings
+			MaxIdleConns:        defaultMaxIdleConns,        // Maximum number of idle connections across all hosts
+			MaxIdleConnsPerHost: defaultMaxIdleConnsPerHost, // Maximum number of idle connections per host
+			IdleConnTimeout:     defaultIdleConnTimeout,     // How long an idle connection is kept in the pool
+			DisableKeepAlives:   false,                      // Enable HTTP keep-alive
+		}
+
+		httpClient = &http.Client{
+			Timeout:   cfg.Timeout,
+			Transport: transport,
 		}
 	}
 
