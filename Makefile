@@ -80,15 +80,15 @@ update: ## Update all dependencies to latest versions and create commit
 
 check-all: copyright-check ## Run all checks (copyright, format, goimports, lint)
 	@echo "Checking code formatting (gofmt)..."
-	@if gofmt -l . | grep -q .; then \
+	@if find . -name "*.go" -not -path "./vendor/*" -not -path "./.git/*" | xargs gofmt -l | grep -q .; then \
 		echo "❌ gofmt found issues. Run 'make fix-all' to fix."; \
-		gofmt -l .; \
+		find . -name "*.go" -not -path "./vendor/*" -not -path "./.git/*" | xargs gofmt -l; \
 		exit 1; \
 	fi
 	@echo "✅ gofmt check passed"
 	@if command -v goimports > /dev/null; then \
 		echo "Running goimports check..."; \
-		if goimports -d . | grep -q .; then \
+		if find . -name "*.go" -not -path "./vendor/*" -not -path "./.git/*" | xargs goimports -d | grep -q .; then \
 			echo "❌ goimports found issues. Run 'make fix-all' to fix."; \
 			exit 1; \
 		fi; \
@@ -112,7 +112,7 @@ check-all: copyright-check ## Run all checks (copyright, format, goimports, lint
 fix-all: copyright-add fmt ## Fix all issues (copyright, format, goimports)
 	@if command -v goimports > /dev/null; then \
 		echo "Running goimports to fix imports..."; \
-		goimports -w .; \
+		find . -name "*.go" -not -path "./vendor/*" -not -path "./.git/*" | xargs goimports -w; \
 		echo "✅ goimports fixes applied"; \
 	else \
 		echo "⚠️  goimports not found, skipping. Install with: go install golang.org/x/tools/cmd/goimports@latest"; \
