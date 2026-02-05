@@ -72,211 +72,211 @@ const (
 
 // Config represents the main application configuration.
 type Config struct {
-	Server        ServerConfig        `yaml:"server"`
-	Harbor        HarborConfig        `yaml:"harbor"`
-	Notify        NotifyConfig        `yaml:"notify"`
-	Processing    ProcessingConfig    `yaml:"processing"`
-	Observability ObservabilityConfig `yaml:"observability"`
-	Templates     TemplateConfig      `yaml:"templates"`
+	Server        ServerConfig        `yaml:"server" mapstructure:"server"`
+	Harbor        HarborConfig        `yaml:"harbor" mapstructure:"harbor"`
+	Notify        NotifyConfig        `yaml:"notify" mapstructure:"notify"`
+	Processing    ProcessingConfig    `yaml:"processing" mapstructure:"processing"`
+	Observability ObservabilityConfig `yaml:"observability" mapstructure:"observability"`
+	Templates     TemplateConfig      `yaml:"templates" mapstructure:"templates"`
 }
 
 // ServerConfig holds HTTP server configuration.
 type ServerConfig struct {
-	Addr              string        `yaml:"addr"`
-	BasePath          string        `yaml:"base_path"`
-	ReadHeaderTimeout time.Duration `yaml:"read_header_timeout"`
-	ShutdownTimeout   time.Duration `yaml:"shutdown_timeout"`
-	HMACSecret        string        `yaml:"hmac_secret"`
-	IPAllowlist       []string      `yaml:"ip_allowlist"`
-	EnablePprof       bool          `yaml:"enable_pprof"`
-	MaxRequestSize    int64         `yaml:"max_request_size"`
-	RateLimit         int           `yaml:"rate_limit"`
-	RateLimitBurst    int           `yaml:"rate_limit_burst"`
-	JWT               JWTConfig     `yaml:"jwt"`
+	Addr              string        `yaml:"addr" mapstructure:"addr"`
+	BasePath          string        `yaml:"base_path" mapstructure:"base_path"`
+	ReadHeaderTimeout time.Duration `yaml:"read_header_timeout" mapstructure:"read_header_timeout"`
+	ShutdownTimeout   time.Duration `yaml:"shutdown_timeout" mapstructure:"shutdown_timeout"`
+	HMACSecret        string        `yaml:"hmac_secret" mapstructure:"hmac_secret"`
+	IPAllowlist       []string      `yaml:"ip_allowlist" mapstructure:"ip_allowlist"`
+	EnablePprof       bool          `yaml:"enable_pprof" mapstructure:"enable_pprof"`
+	MaxRequestSize    int64         `yaml:"max_request_size" mapstructure:"max_request_size"`
+	RateLimit         int           `yaml:"rate_limit" mapstructure:"rate_limit"`
+	RateLimitBurst    int           `yaml:"rate_limit_burst" mapstructure:"rate_limit_burst"`
+	JWT               JWTConfig     `yaml:"jwt" mapstructure:"jwt"`
 }
 
 // JWTConfig holds JWT authentication configuration.
 type JWTConfig struct {
-	Secret     string        `yaml:"secret"`
-	Algorithm  string        `yaml:"algorithm"` // HS256, RS256, etc.
-	Issuer     string        `yaml:"issuer"`
-	Audience   []string      `yaml:"audience"`
-	Expiration time.Duration `yaml:"expiration"`
+	Secret     string        `yaml:"secret" mapstructure:"secret"`
+	Algorithm  string        `yaml:"algorithm" mapstructure:"algorithm"` // HS256, RS256, etc.
+	Issuer     string        `yaml:"issuer" mapstructure:"issuer"`
+	Audience   []string      `yaml:"audience" mapstructure:"audience"`
+	Expiration time.Duration `yaml:"expiration" mapstructure:"expiration"`
 }
 
 // HarborConfig holds Harbor API client configuration.
 type HarborConfig struct {
-	BaseURL            string        `yaml:"base_url"`
-	Username           string        `yaml:"username"`
-	Password           string        `yaml:"password"`
-	InsecureSkipVerify bool          `yaml:"insecure_skip_verify"`
-	Timeout            time.Duration `yaml:"timeout"`
+	BaseURL            string        `yaml:"base_url" mapstructure:"base_url"`
+	Username           string        `yaml:"username" mapstructure:"username"`
+	Password           string        `yaml:"password" mapstructure:"password"`
+	InsecureSkipVerify bool          `yaml:"insecure_skip_verify" mapstructure:"insecure_skip_verify"`
+	Timeout            time.Duration `yaml:"timeout" mapstructure:"timeout"`
 }
 
 // NotifyConfig holds notification service configurations.
 type NotifyConfig struct {
-	Telegram   TelegramConfig   `yaml:"telegram"`
-	Email      EmailConfig      `yaml:"email"`
-	Slack      SlackConfig      `yaml:"slack"`
-	Mattermost MattermostConfig `yaml:"mattermost"`
+	Telegram   TelegramConfig   `yaml:"telegram" mapstructure:"telegram"`
+	Email      EmailConfig      `yaml:"email" mapstructure:"email"`
+	Slack      SlackConfig      `yaml:"slack" mapstructure:"slack"`
+	Mattermost MattermostConfig `yaml:"mattermost" mapstructure:"mattermost"`
 }
 
 // TelegramConfig holds Telegram bot configuration.
 type TelegramConfig struct {
-	Enabled       bool                `yaml:"enabled"`
-	BotToken      string              `yaml:"bot_token"`
-	ChatID        string              `yaml:"chat_id"`
-	Timeout       time.Duration       `yaml:"timeout"`
-	RatePerMinute int                 `yaml:"rate_per_minute"`
-	Debug         bool                `yaml:"debug"`
-	Webhook       WebhookConfig       `yaml:"webhook"`
-	MessageFormat MessageFormatConfig `yaml:"message_format"`
-	Templates     TemplateConfig      `yaml:"templates"`
+	Enabled       bool                `yaml:"enabled" mapstructure:"enabled"`
+	BotToken      string              `yaml:"bot_token" mapstructure:"bot_token"`
+	ChatID        string              `yaml:"chat_id" mapstructure:"chat_id"`
+	Timeout       time.Duration       `yaml:"timeout" mapstructure:"timeout"`
+	RatePerMinute int                 `yaml:"rate_per_minute" mapstructure:"rate_per_minute"`
+	Debug         bool                `yaml:"debug" mapstructure:"debug"`
+	Webhook       WebhookConfig       `yaml:"webhook" mapstructure:"webhook"`
+	MessageFormat MessageFormatConfig `yaml:"message_format" mapstructure:"message_format"`
+	Templates     TemplateConfig      `yaml:"templates" mapstructure:"templates"`
 }
 
 // WebhookConfig holds webhook configuration for Telegram/Mattermost.
 type WebhookConfig struct {
-	Enabled        bool     `yaml:"enabled"`
-	URL            string   `yaml:"url"`
-	SecretToken    string   `yaml:"secret_token"`
-	MaxConnections int      `yaml:"max_connections"`
-	AllowedUpdates []string `yaml:"allowed_updates"`
+	Enabled        bool     `yaml:"enabled" mapstructure:"enabled"`
+	URL            string   `yaml:"url" mapstructure:"url"`
+	SecretToken    string   `yaml:"secret_token" mapstructure:"secret_token"`
+	MaxConnections int      `yaml:"max_connections" mapstructure:"max_connections"`
+	AllowedUpdates []string `yaml:"allowed_updates" mapstructure:"allowed_updates"`
 }
 
 // MessageFormatConfig holds message formatting configuration.
 type MessageFormatConfig struct {
-	EscapeMarkdown    bool           `yaml:"escape_markdown"`
-	DisableWebPreview bool           `yaml:"disable_web_preview"`
-	EnableHTML        bool           `yaml:"enable_html"`
-	ShowTimestamp     bool           `yaml:"show_timestamp"`
-	IncludeSeverity   bool           `yaml:"include_severity"`
-	MaxMessageLength  int            `yaml:"max_message_length"`
-	CustomPrefix      string         `yaml:"custom_prefix"`
-	CustomSuffix      string         `yaml:"custom_suffix"`
-	SeverityColors    SeverityColors `yaml:"severity_colors"`
+	EscapeMarkdown    bool           `yaml:"escape_markdown" mapstructure:"escape_markdown"`
+	DisableWebPreview bool           `yaml:"disable_web_preview" mapstructure:"disable_web_preview"`
+	EnableHTML        bool           `yaml:"enable_html" mapstructure:"enable_html"`
+	ShowTimestamp     bool           `yaml:"show_timestamp" mapstructure:"show_timestamp"`
+	IncludeSeverity   bool           `yaml:"include_severity" mapstructure:"include_severity"`
+	MaxMessageLength  int            `yaml:"max_message_length" mapstructure:"max_message_length"`
+	CustomPrefix      string         `yaml:"custom_prefix" mapstructure:"custom_prefix"`
+	CustomSuffix      string         `yaml:"custom_suffix" mapstructure:"custom_suffix"`
+	SeverityColors    SeverityColors `yaml:"severity_colors" mapstructure:"severity_colors"`
 }
 
 // TemplateConfig holds template configuration
 type TemplateConfig struct {
-	Enabled    bool   `yaml:"enabled"`
-	Path       string `yaml:"path"`
-	Reload     bool   `yaml:"reload"`      // Enable hot reload of templates
-	WatchFiles bool   `yaml:"watch_files"` // Watch template files for changes
+	Enabled    bool   `yaml:"enabled" mapstructure:"enabled"`
+	Path       string `yaml:"path" mapstructure:"path"`
+	Reload     bool   `yaml:"reload" mapstructure:"reload"`           // Enable hot reload of templates
+	WatchFiles bool   `yaml:"watch_files" mapstructure:"watch_files"` // Watch template files for changes
 }
 
 // SlackConfig holds Slack notification configuration.
 type SlackConfig struct {
-	Enabled           bool                `yaml:"enabled"`
-	Token             string              `yaml:"token"`
-	Channel           string              `yaml:"channel"`
-	Timeout           time.Duration       `yaml:"timeout"`
-	RatePerMinute     int                 `yaml:"rate_per_minute"`
-	Debug             bool                `yaml:"debug"`
-	MessageFormat     MessageFormatConfig `yaml:"message_format"`
-	Templates         TemplateConfig      `yaml:"templates"`
-	Username          string              `yaml:"username"`
-	IconEmoji         string              `yaml:"icon_emoji"`
-	IconURL           string              `yaml:"icon_url"`
-	LinkNames         bool                `yaml:"link_names"`
-	UnfurlLinks       bool                `yaml:"unfurl_links"`
-	UnfurlMedia       bool                `yaml:"unfurl_media"`
-	Markdown          bool                `yaml:"markdown"`
-	EnableBlocks      bool                `yaml:"enable_blocks"`
-	EnableInteractive bool                `yaml:"enable_interactive"`
-	ThreadTS          string              `yaml:"thread_ts"`
-	ReplyBroadcast    bool                `yaml:"reply_broadcast"`
-	EnableReactions   bool                `yaml:"enable_reactions"`
-	EnableScheduling  bool                `yaml:"enable_scheduling"`
+	Enabled           bool                `yaml:"enabled" mapstructure:"enabled"`
+	Token             string              `yaml:"token" mapstructure:"token"`
+	Channel           string              `yaml:"channel" mapstructure:"channel"`
+	Timeout           time.Duration       `yaml:"timeout" mapstructure:"timeout"`
+	RatePerMinute     int                 `yaml:"rate_per_minute" mapstructure:"rate_per_minute"`
+	Debug             bool                `yaml:"debug" mapstructure:"debug"`
+	MessageFormat     MessageFormatConfig `yaml:"message_format" mapstructure:"message_format"`
+	Templates         TemplateConfig      `yaml:"templates" mapstructure:"templates"`
+	Username          string              `yaml:"username" mapstructure:"username"`
+	IconEmoji         string              `yaml:"icon_emoji" mapstructure:"icon_emoji"`
+	IconURL           string              `yaml:"icon_url" mapstructure:"icon_url"`
+	LinkNames         bool                `yaml:"link_names" mapstructure:"link_names"`
+	UnfurlLinks       bool                `yaml:"unfurl_links" mapstructure:"unfurl_links"`
+	UnfurlMedia       bool                `yaml:"unfurl_media" mapstructure:"unfurl_media"`
+	Markdown          bool                `yaml:"markdown" mapstructure:"markdown"`
+	EnableBlocks      bool                `yaml:"enable_blocks" mapstructure:"enable_blocks"`
+	EnableInteractive bool                `yaml:"enable_interactive" mapstructure:"enable_interactive"`
+	ThreadTS          string              `yaml:"thread_ts" mapstructure:"thread_ts"`
+	ReplyBroadcast    bool                `yaml:"reply_broadcast" mapstructure:"reply_broadcast"`
+	EnableReactions   bool                `yaml:"enable_reactions" mapstructure:"enable_reactions"`
+	EnableScheduling  bool                `yaml:"enable_scheduling" mapstructure:"enable_scheduling"`
 }
 
 // MattermostConfig holds Mattermost notification configuration.
 type MattermostConfig struct {
-	Enabled       bool                `yaml:"enabled"`
-	ServerURL     string              `yaml:"server_url"`
-	Token         string              `yaml:"token"`
-	Channel       string              `yaml:"channel"`
-	Team          string              `yaml:"team"`
-	Timeout       time.Duration       `yaml:"timeout"`
-	RatePerMinute int                 `yaml:"rate_per_minute"`
-	Debug         bool                `yaml:"debug"`
-	MessageFormat MessageFormatConfig `yaml:"message_format"`
-	Templates     TemplateConfig      `yaml:"templates"`
-	Username      string              `yaml:"username"`
-	IconEmoji     string              `yaml:"icon_emoji"`
-	IconURL       string              `yaml:"icon_url"`
-	UnfurlLinks   bool                `yaml:"unfurl_links"`
-	UnfurlMedia   bool                `yaml:"unfurl_media"`
-	Markdown      bool                `yaml:"markdown"`
-	CreateChannel bool                `yaml:"create_channel"`
-	ChannelType   string              `yaml:"channel_type"` // "public", "private", "direct"
-	Webhook       WebhookConfig       `yaml:"webhook"`
+	Enabled       bool                `yaml:"enabled" mapstructure:"enabled"`
+	ServerURL     string              `yaml:"server_url" mapstructure:"server_url"`
+	Token         string              `yaml:"token" mapstructure:"token"`
+	Channel       string              `yaml:"channel" mapstructure:"channel"`
+	Team          string              `yaml:"team" mapstructure:"team"`
+	Timeout       time.Duration       `yaml:"timeout" mapstructure:"timeout"`
+	RatePerMinute int                 `yaml:"rate_per_minute" mapstructure:"rate_per_minute"`
+	Debug         bool                `yaml:"debug" mapstructure:"debug"`
+	MessageFormat MessageFormatConfig `yaml:"message_format" mapstructure:"message_format"`
+	Templates     TemplateConfig      `yaml:"templates" mapstructure:"templates"`
+	Username      string              `yaml:"username" mapstructure:"username"`
+	IconEmoji     string              `yaml:"icon_emoji" mapstructure:"icon_emoji"`
+	IconURL       string              `yaml:"icon_url" mapstructure:"icon_url"`
+	UnfurlLinks   bool                `yaml:"unfurl_links" mapstructure:"unfurl_links"`
+	UnfurlMedia   bool                `yaml:"unfurl_media" mapstructure:"unfurl_media"`
+	Markdown      bool                `yaml:"markdown" mapstructure:"markdown"`
+	CreateChannel bool                `yaml:"create_channel" mapstructure:"create_channel"`
+	ChannelType   string              `yaml:"channel_type" mapstructure:"channel_type"` // "public", "private", "direct"
+	Webhook       WebhookConfig       `yaml:"webhook" mapstructure:"webhook"`
 }
 
 // SeverityColors holds color configuration for different severity levels.
 type SeverityColors struct {
-	Critical string `yaml:"critical"`
-	High     string `yaml:"high"`
-	Medium   string `yaml:"medium"`
-	Low      string `yaml:"low"`
-	Unknown  string `yaml:"unknown"`
+	Critical string `yaml:"critical" mapstructure:"critical"`
+	High     string `yaml:"high" mapstructure:"high"`
+	Medium   string `yaml:"medium" mapstructure:"medium"`
+	Low      string `yaml:"low" mapstructure:"low"`
+	Unknown  string `yaml:"unknown" mapstructure:"unknown"`
 }
 
 // EmailConfig holds email notification configuration.
 type EmailConfig struct {
-	Enabled       bool       `yaml:"enabled"`
-	SMTP          SMTPConfig `yaml:"smtp"`
-	To            []string   `yaml:"to"`
-	CC            []string   `yaml:"cc"`
-	BCC           []string   `yaml:"bcc"`
-	SubjectPrefix string     `yaml:"subject_prefix"`
+	Enabled       bool       `yaml:"enabled" mapstructure:"enabled"`
+	SMTP          SMTPConfig `yaml:"smtp" mapstructure:"smtp"`
+	To            []string   `yaml:"to" mapstructure:"to"`
+	CC            []string   `yaml:"cc" mapstructure:"cc"`
+	BCC           []string   `yaml:"bcc" mapstructure:"bcc"`
+	SubjectPrefix string     `yaml:"subject_prefix" mapstructure:"subject_prefix"`
 }
 
 // SMTPConfig holds SMTP server configuration.
 type SMTPConfig struct {
-	Host               string        `yaml:"host"`
-	Port               int           `yaml:"port"`
-	Username           string        `yaml:"username"`
-	Password           string        `yaml:"password"`
-	From               string        `yaml:"from"`
-	StartTLS           bool          `yaml:"starttls"`
-	Timeout            time.Duration `yaml:"timeout"`
-	AuthType           string        `yaml:"auth_type"`  // "plain", "login", "crammd5", "scram", "xoauth2"
-	Encryption         string        `yaml:"encryption"` // "none", "ssl", "tls"
-	HELOHost           string        `yaml:"helo_host"`
-	LocalName          string        `yaml:"local_name"`
-	DisableHELO        bool          `yaml:"disable_helo"`
-	DisableSTARTTLS    bool          `yaml:"disable_starttls"`
-	SSLInsecure        bool          `yaml:"ssl_insecure"`
-	SSNOCHECK          bool          `yaml:"ssl_nocertcheck"`
-	SSNoverify         bool          `yaml:"ssl_noverify"`
-	SSNoverifyHostname bool          `yaml:"ssl_noverify_hostname"` // Skip hostname verification in SSL certificate
+	Host               string        `yaml:"host" mapstructure:"host"`
+	Port               int           `yaml:"port" mapstructure:"port"`
+	Username           string        `yaml:"username" mapstructure:"username"`
+	Password           string        `yaml:"password" mapstructure:"password"`
+	From               string        `yaml:"from" mapstructure:"from"`
+	StartTLS           bool          `yaml:"starttls" mapstructure:"starttls"`
+	Timeout            time.Duration `yaml:"timeout" mapstructure:"timeout"`
+	AuthType           string        `yaml:"auth_type" mapstructure:"auth_type"`   // "plain", "login", "crammd5", "scram", "xoauth2"
+	Encryption         string        `yaml:"encryption" mapstructure:"encryption"` // "none", "ssl", "tls"
+	HELOHost           string        `yaml:"helo_host" mapstructure:"helo_host"`
+	LocalName          string        `yaml:"local_name" mapstructure:"local_name"`
+	DisableHELO        bool          `yaml:"disable_helo" mapstructure:"disable_helo"`
+	DisableSTARTTLS    bool          `yaml:"disable_starttls" mapstructure:"disable_starttls"`
+	SSLInsecure        bool          `yaml:"ssl_insecure" mapstructure:"ssl_insecure"`
+	SSNOCHECK          bool          `yaml:"ssl_nocertcheck" mapstructure:"ssl_nocertcheck"`
+	SSNoverify         bool          `yaml:"ssl_noverify" mapstructure:"ssl_noverify"`
+	SSNoverifyHostname bool          `yaml:"ssl_noverify_hostname" mapstructure:"ssl_noverify_hostname"` // Skip hostname verification in SSL certificate
 }
 
 // ProcessingConfig holds event processing configuration.
 type ProcessingConfig struct {
-	EnrichViaHarborAPI bool        `yaml:"enrich_via_harbor_api"`
-	MaxConcurrency     int         `yaml:"max_concurrency"`
-	MaxQueue           int         `yaml:"max_queue"`
-	Retry              RetryConfig `yaml:"retry"`
+	EnrichViaHarborAPI bool        `yaml:"enrich_via_harbor_api" mapstructure:"enrich_via_harbor_api"`
+	MaxConcurrency     int         `yaml:"max_concurrency" mapstructure:"max_concurrency"`
+	MaxQueue           int         `yaml:"max_queue" mapstructure:"max_queue"`
+	Retry              RetryConfig `yaml:"retry" mapstructure:"retry"`
 }
 
 // RetryConfig holds retry policy configuration.
 type RetryConfig struct {
-	MaxAttempts    int           `yaml:"max_attempts"`
-	InitialBackoff time.Duration `yaml:"initial_backoff"`
-	MaxBackoff     time.Duration `yaml:"max_backoff"`
+	MaxAttempts    int           `yaml:"max_attempts" mapstructure:"max_attempts"`
+	InitialBackoff time.Duration `yaml:"initial_backoff" mapstructure:"initial_backoff"`
+	MaxBackoff     time.Duration `yaml:"max_backoff" mapstructure:"max_backoff"`
 }
 
 // ObservabilityConfig holds observability (metrics, logging) configuration.
 type ObservabilityConfig struct {
-	MetricsAddr string    `yaml:"metrics_addr"`
-	Log         LogConfig `yaml:"log"`
+	MetricsAddr string    `yaml:"metrics_addr" mapstructure:"metrics_addr"`
+	Log         LogConfig `yaml:"log" mapstructure:"log"`
 }
 
 // LogConfig holds logging configuration.
 type LogConfig struct {
-	Level  string `yaml:"level"`
-	Format string `yaml:"format"`
+	Level  string `yaml:"level" mapstructure:"level"`
+	Format string `yaml:"format" mapstructure:"format"`
 }
 
 // DefaultConfig returns a default configuration
