@@ -37,6 +37,11 @@ func NewBaseNotifier(name string, limiter RateLimiter) *BaseNotifier {
 	}
 }
 
+// Name returns the name of this notifier
+func (b *BaseNotifier) Name() string {
+	return b.name
+}
+
 // ApplyRateLimit applies rate limiting if configured
 func (b *BaseNotifier) ApplyRateLimit(ctx context.Context) error {
 	if b.limiter != nil {

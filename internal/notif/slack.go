@@ -17,13 +17,12 @@ package notif
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"strconv"
 	"strings"
 	"time"
 
 	"github.com/slack-go/slack"
+	"go.uber.org/zap"
 
 	"github.com/atlet99/ht-notifier/internal/config"
 )
@@ -39,10 +38,11 @@ type Slack struct {
 	*BaseNotifier
 	api         *slack.Client
 	slackConfig config.SlackConfig
+	logger      *zap.Logger
 }
 
 // NewSlack creates a new Slack notifier
-func NewSlack(cfg *config.SlackConfig, limiter RateLimiter) (*Slack, error) {
+func NewSlack(cfg *config.SlackConfig, limiter RateLimiter, logger *zap.Logger) (*Slack, error) {
 	if !cfg.Enabled {
 		return nil, fmt.Errorf("Slack notifier is not enabled")
 	}
@@ -60,10 +60,11 @@ func NewSlack(cfg *config.SlackConfig, limiter RateLimiter) (*Slack, error) {
 		BaseNotifier: NewBaseNotifier("slack", limiter),
 		api:          api,
 		slackConfig:  validatedCfg,
+		logger:       logger,
 	}, nil
 }
 
-// Send implements the Notifier interface for Slack
+// Send sends a message to the configured Slack channel
 func (s *Slack) Send(ctx context.Context, msg *Message) error {
 	start := time.Now()
 
@@ -72,16 +73,35 @@ func (s *Slack) Send(ctx context.Context, msg *Message) error {
 		return err
 	}
 
-	// Format the message for Slack
-	formattedMsg := s.formatMessage(msg)
+	// Build blocks
+	blocks := s.buildMessageBlocks(msg)
 
-	// Post message to Slack
-	options := []slack.MsgOption{
-		slack.MsgOptionText(formattedMsg, s.slackConfig.Markdown),
-		slack.MsgOptionTS(strconv.FormatInt(time.Now().Add(1*time.Second).Unix(), 10)), // Schedule message for next second
+	// Determine color based on severity
+	color := s.getSeverityColor(msg)
+
+	// Create attachment with blocks to preserve color bar
+	attachment := slack.Attachment{
+		Color:  color,
+		Blocks: blocks,
 	}
-	options = append(options, s.getMessageOptions(msg)...)
 
+	// Standard options
+	options := []slack.MsgOption{
+		slack.MsgOptionAttachments(attachment),
+		slack.MsgOptionAsUser(true), // Send as the bot user
+	}
+
+	// Add username/icon overrides if configured
+	if s.slackConfig.Username != "" {
+		options = append(options, slack.MsgOptionUsername(s.slackConfig.Username))
+	}
+	if s.slackConfig.IconEmoji != "" {
+		options = append(options, slack.MsgOptionIconEmoji(s.slackConfig.IconEmoji))
+	} else if s.slackConfig.IconURL != "" {
+		options = append(options, slack.MsgOptionIconURL(s.slackConfig.IconURL))
+	}
+
+	// Post message
 	channelID, timestamp, err := s.api.PostMessageContext(
 		ctx,
 		s.slackConfig.Channel,
@@ -91,430 +111,186 @@ func (s *Slack) Send(ctx context.Context, msg *Message) error {
 
 	if err != nil {
 		s.RecordFailure(err)
-		return fmt.Errorf("failed to send Slack message: %w", err)
+		return fmt.Errorf("failed to send slack message: %w", err)
 	}
 
-	// Log the message (if debug is enabled)
 	if s.slackConfig.Debug {
-		fmt.Printf("Slack message sent to channel %s at %s: %s\n", channelID, timestamp, formattedMsg)
+		s.logger.Debug("Slack message sent",
+			zap.String("channel", channelID),
+			zap.String("timestamp", timestamp))
 	}
 
 	s.RecordSuccess(duration)
 	return nil
 }
 
-// ValidateToken validates the Slack token and checks permissions
-func (s *Slack) ValidateToken(ctx context.Context) error {
-	// Apply rate limiting if configured
-	if err := s.ApplyRateLimit(ctx); err != nil {
-		return err
-	}
+// buildMessageBlocks constructs the Block Kit blocks for the message
+func (s *Slack) buildMessageBlocks(msg *Message) slack.Blocks {
+	blockSet := []slack.Block{}
 
-	// Test the token by calling auth.test
-	authResp, err := s.api.AuthTestContext(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to validate Slack token: %w", err)
-	}
-
-	// Log the validation result (if debug is enabled)
-	if s.slackConfig.Debug {
-		fmt.Printf("Slack token validated for user: %s, team: %s\n", authResp.UserID, authResp.TeamID)
-	}
-
-	return nil
-}
-
-// GetUserInfo retrieves user information for the authenticated token
-func (s *Slack) GetUserInfo(ctx context.Context) (*slack.User, error) {
-	// Apply rate limiting if configured
-	if err := s.ApplyRateLimit(ctx); err != nil {
-		return nil, err
-	}
-
-	// Get user info
-	authResp, err := s.api.AuthTestContext(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get auth info: %w", err)
-	}
-
-	userInfo, err := s.api.GetUserInfoContext(ctx, authResp.UserID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get user info: %w", err)
-	}
-
-	return userInfo, nil
-}
-
-// GetBotInfo retrieves bot information for the authenticated token
-func (s *Slack) GetBotInfo(ctx context.Context) (*slack.Bot, error) {
-	// Apply rate limiting if configured
-	if err := s.ApplyRateLimit(ctx); err != nil {
-		return nil, err
-	}
-
-	// Get auth info
-	authResp, err := s.api.AuthTestContext(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get auth info: %w", err)
-	}
-
-	// Get bot info using correct API method
-	botInfo, err := s.api.GetBotInfoContext(ctx, slack.GetBotInfoParameters{
-		Bot: authResp.BotID,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to get bot info: %w", err)
-	}
-
-	return botInfo, nil
-}
-
-// CheckPermissions checks if the app has required permissions
-func (s *Slack) CheckPermissions(ctx context.Context, requiredScopes []string) (bool, error) {
-	// Apply rate limiting if configured
-	if s.limiter != nil {
-		if err := s.limiter.Wait(ctx); err != nil {
-			return false, fmt.Errorf("rate limiter wait failed: %w", err)
-		}
-	}
-
-	// Get auth info to check scopes
-	_, err := s.api.AuthTestContext(ctx)
-	if err != nil {
-		return false, fmt.Errorf("failed to get auth info: %w", err)
-	}
-
-	// Note: Scopes field is not available in AuthTestResponse in this version
-	// We'll need to use a different approach to check scopes
-	// For now, we'll assume the token has the required permissions
-	// since we successfully authenticated
-	authScopes := []string{} // Empty scopes - we can't retrieve them from auth test
-
-	for _, requiredScope := range requiredScopes {
-		found := false
-		for _, authScope := range authScopes {
-			if strings.TrimSpace(authScope) == requiredScope {
-				found = true
-				break
-			}
-		}
-		if !found {
-			return false, fmt.Errorf("missing required scope: %s", requiredScope)
-		}
-	}
-
-	return true, nil
-}
-
-// RefreshToken refreshes the Slack token (for OAuth tokens)
-func (s *Slack) RefreshToken(ctx context.Context, _ string) error {
-	// Apply rate limiting if configured
-	if s.limiter != nil {
-		if err := s.limiter.Wait(ctx); err != nil {
-			return fmt.Errorf("rate limiter wait failed: %w", err)
-		}
-	}
-
-	// Note: This is a placeholder implementation
-	// In a real implementation, you would call the Slack OAuth API to refresh the token
-	// This would require additional configuration for OAuth client ID, client secret, etc.
-
-	return fmt.Errorf("token refresh not implemented - requires OAuth configuration")
-}
-
-// GetChannelInfo retrieves information about a channel
-func (s *Slack) GetChannelInfo(ctx context.Context, channelID string) (*slack.Channel, error) {
-	// Apply rate limiting if configured
-	if err := s.ApplyRateLimit(ctx); err != nil {
-		return nil, err
-	}
-
-	channelInfo, err := s.api.GetConversationInfoContext(ctx, &slack.GetConversationInfoInput{
-		ChannelID: channelID,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to get channel info: %w", err)
-	}
-
-	return channelInfo, nil
-}
-
-// SendThread sends a message as a reply to an existing thread
-func (s *Slack) SendThread(ctx context.Context, msg *Message, threadTS string) error {
-	// Apply rate limiting if configured
-	if s.limiter != nil {
-		if err := s.limiter.Wait(ctx); err != nil {
-			return fmt.Errorf("rate limiter wait failed: %w", err)
-		}
-	}
-
-	// Format the message for Slack
-	formattedMsg := s.formatMessage(msg)
-
-	// Post message to thread
-	options := []slack.MsgOption{
-		slack.MsgOptionText(formattedMsg, s.slackConfig.Markdown),
-		slack.MsgOptionTS(threadTS), // Reply to thread
-	}
-
-	options = append(options, s.getMessageOptions(msg)...)
-
-	_, timestamp, err := s.api.PostMessageContext(
-		ctx,
-		s.slackConfig.Channel,
-		options...,
-	)
-	if err != nil {
-		return fmt.Errorf("failed to send threaded Slack message: %w", err)
-	}
-
-	// Log the message (if debug is enabled)
-	if s.slackConfig.Debug {
-		fmt.Printf("Slack threaded message sent at %s: %s\n", timestamp, formattedMsg)
-	}
-
-	return nil
-}
-
-// AddReaction adds a reaction to a message
-func (s *Slack) AddReaction(ctx context.Context, channelID, timestamp, emoji string) error {
-	// Apply rate limiting if configured
-	if s.limiter != nil {
-		if err := s.limiter.Wait(ctx); err != nil {
-			return fmt.Errorf("rate limiter wait failed: %w", err)
-		}
-	}
-
-	err := s.api.AddReactionContext(ctx, emoji, slack.ItemRef{
-		Channel:   channelID,
-		Timestamp: timestamp,
-	})
-	if err != nil {
-		return fmt.Errorf("failed to add reaction: %w", err)
-	}
-
-	return nil
-}
-
-// GetThreadHistory retrieves message history from a thread
-func (s *Slack) GetThreadHistory(ctx context.Context, channelID, threadTS string) ([]slack.Message, error) {
-	// Apply rate limiting if configured
-	if err := s.ApplyRateLimit(ctx); err != nil {
-		return nil, err
-	}
-
-	history, err := s.api.GetConversationHistoryContext(ctx, &slack.GetConversationHistoryParameters{
-		ChannelID: channelID,
-		Latest:    threadTS,
-		Oldest:    "0",
-		Limit:     slackConversationHistoryLimit,
-		Inclusive: true,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to get thread history: %w", err)
-	}
-
-	return history.Messages, nil
-}
-
-// Name returns the name of this notifier
-func (s *Slack) Name() string {
-	return s.name
-}
-
-// formatMessage formats the message according to Slack configuration
-func (s *Slack) formatMessage(msg *Message) string {
-	var builder strings.Builder
-
-	// Add custom prefix if configured
-	if s.slackConfig.MessageFormat.CustomPrefix != "" {
-		builder.WriteString(s.slackConfig.MessageFormat.CustomPrefix)
-		builder.WriteString(" ")
-	}
-
-	// Add severity indicator if configured
-	if s.slackConfig.MessageFormat.IncludeSeverity && msg.Labels["severity"] != "" {
-		severity := strings.ToLower(msg.Labels["severity"])
-		color := s.getSeverityColor(severity)
-		builder.WriteString(fmt.Sprintf("%s ", color))
-	}
-
-	// Add title if provided
+	// 1. Header Section
 	if msg.Title != "" {
-		builder.WriteString(fmt.Sprintf("*%s*\n", s.escapeMarkdown(msg.Title)))
+		headerText := slack.NewTextBlockObject(slack.MarkdownType, fmt.Sprintf("*%s*", msg.Title), false, false)
+		headerBlock := slack.NewSectionBlock(headerText, nil, nil)
+		blockSet = append(blockSet, headerBlock)
 	}
 
-	// Add body if provided
+	// 2. Body Section
 	if msg.Body != "" {
 		body := msg.Body
 		if s.slackConfig.MessageFormat.EscapeMarkdown {
 			body = s.escapeMarkdown(body)
 		}
-		builder.WriteString(body)
+		bodyText := slack.NewTextBlockObject(slack.MarkdownType, body, false, false)
+		bodyBlock := slack.NewSectionBlock(bodyText, nil, nil)
+		blockSet = append(blockSet, bodyBlock)
 	}
 
-	// Add HTML body if enabled and provided
-	if s.slackConfig.MessageFormat.EnableHTML && msg.HTML != "" {
-		builder.WriteString("\n\n")
-		builder.WriteString(msg.HTML)
+	// 3. Fields Section (Severity, Project, etc.)
+	var fields []*slack.TextBlockObject
+
+	// Add Severity counts if available
+	if len(msg.SeverityCounts) > 0 {
+		var severityText strings.Builder
+		severityText.WriteString("*Severity Summary:*\n")
+		// Sort keys for deterministic order
+		severities := make([]string, 0, len(msg.SeverityCounts))
+		for k := range msg.SeverityCounts {
+			severities = append(severities, k)
+		}
+		for _, k := range severities {
+			count := msg.SeverityCounts[k]
+			icon := s.getSeverityIcon(k)
+			severityText.WriteString(fmt.Sprintf("%s %s: %d\n", icon, k, count))
+		}
+		fields = append(fields, slack.NewTextBlockObject(slack.MarkdownType, severityText.String(), false, false))
 	}
 
-	// Add link if provided
-	if msg.Link != "" {
-		builder.WriteString(fmt.Sprintf("\n\n🔗 %s", msg.Link))
-	}
-
-	// Add custom suffix if configured
-	if s.slackConfig.MessageFormat.CustomSuffix != "" {
-		builder.WriteString(" ")
-		builder.WriteString(s.slackConfig.MessageFormat.CustomSuffix)
-	}
-
-	// Add timestamp if configured
-	if s.slackConfig.MessageFormat.ShowTimestamp {
-		builder.WriteString(fmt.Sprintf("\n\n*Timestamp: %s*", time.Now().Format(time.RFC1123)))
-	}
-
-	// Truncate message if it exceeds max length
-	result := builder.String()
-	if len(result) > s.slackConfig.MessageFormat.MaxMessageLength {
-		result = result[:s.slackConfig.MessageFormat.MaxMessageLength-3] + "..."
-	}
-
-	return result
-}
-
-// getMessageOptions returns additional message options for Slack
-func (s *Slack) getMessageOptions(msg *Message) []slack.MsgOption {
-	var options []slack.MsgOption
-
-	// Set username if configured
-	if s.slackConfig.Username != "" {
-		options = append(options, slack.MsgOptionUsername(s.slackConfig.Username))
-	}
-
-	// Set icon if configured
-	if s.slackConfig.IconEmoji != "" {
-		options = append(options, slack.MsgOptionIconEmoji(s.slackConfig.IconEmoji))
-	} else if s.slackConfig.IconURL != "" {
-		options = append(options, slack.MsgOptionIconURL(s.slackConfig.IconURL))
-	}
-
-	// Configure link names
-	if s.slackConfig.LinkNames {
-		options = append(options, slack.MsgOptionLinkNames(true))
-	}
-
-	// Configure unfurl options
-	if s.slackConfig.UnfurlLinks {
-		options = append(options, slack.MsgOptionEnableLinkUnfurl())
-	}
-	if !s.slackConfig.UnfurlMedia {
-		options = append(options, slack.MsgOptionDisableMediaUnfurl())
-	}
-
-	// Add attachments if message has metadata
+	// Add Metadata fields
 	if len(msg.Metadata) > 0 {
-		attachment := slack.Attachment{
-			Color:      s.getAttachmentColor(msg),
-			Fields:     s.createAttachmentFields(msg),
-			Footer:     "Harbor Notifier",
-			Ts:         json.Number(strconv.FormatInt(time.Now().Unix(), 10)),
-			MarkdownIn: []string{"text", "pretext"},
+		var metaText strings.Builder
+		metaText.WriteString("*Details:*\n")
+		for k, v := range msg.Metadata {
+			metaText.WriteString(fmt.Sprintf("• *%s*: %v\n", k, v))
 		}
-
-		options = append(options, slack.MsgOptionAttachments(attachment))
+		fields = append(fields, slack.NewTextBlockObject(slack.MarkdownType, metaText.String(), false, false))
 	}
 
-	return options
-}
-
-// getSeverityColor returns the color emoji for a given severity level
-func (s *Slack) getSeverityColor(severity string) string {
-	switch severity {
-	case "critical":
-		return s.slackConfig.MessageFormat.SeverityColors.Critical
-	case "high":
-		return s.slackConfig.MessageFormat.SeverityColors.High
-	case "medium":
-		return s.slackConfig.MessageFormat.SeverityColors.Medium
-	case "low":
-		return s.slackConfig.MessageFormat.SeverityColors.Low
-	default:
-		return s.slackConfig.MessageFormat.SeverityColors.Unknown
-	}
-}
-
-// getAttachmentColor returns the color for Slack attachment based on severity
-func (s *Slack) getAttachmentColor(msg *Message) string {
-	severity := msg.Labels["severity"]
-	switch severity {
-	case "critical":
-		return "danger"
-	case "high":
-		return "warning"
-	case "medium":
-		return "good"
-	case "low":
-		return "#36a64f" // Light green
-	default:
-		return "#808080" // Gray
-	}
-}
-
-// createAttachmentFields creates attachment fields from message metadata
-func (s *Slack) createAttachmentFields(msg *Message) []slack.AttachmentField {
-	fields := []slack.AttachmentField{}
-
-	// Add severity field
-	if msg.Labels["severity"] != "" {
-		fields = append(fields, slack.AttachmentField{
-			Title: "Severity",
-			Value: msg.Labels["severity"],
-			Short: true,
-		})
-	}
-
-	// Add repository field
-	if msg.Labels["repository"] != "" {
-		fields = append(fields, slack.AttachmentField{
-			Title: "Repository",
-			Value: msg.Labels["repository"],
-			Short: true,
-		})
-	}
-
-	// Add tag field
-	if msg.Labels["tag"] != "" {
-		fields = append(fields, slack.AttachmentField{
-			Title: "Tag",
-			Value: msg.Labels["tag"],
-			Short: true,
-		})
-	}
-
-	// Add digest field
-	if msg.Labels["digest"] != "" {
-		fields = append(fields, slack.AttachmentField{
-			Title: "Digest",
-			Value: msg.Labels["digest"],
-			Short: true,
-		})
-	}
-
-	// Add metadata fields
-	for key, value := range msg.Metadata {
-		if len(fields) >= slackFieldsLimit { // Slack limit for fields
-			break
+	// If we have fields, add them in a section
+	if len(fields) > 0 {
+		// Slack allows max 10 fields per section
+		if len(fields) > 10 {
+			fields = fields[:10]
 		}
-		fields = append(fields, slack.AttachmentField{
-			Title: key,
-			Value: fmt.Sprintf("%v", value),
-			Short: len(fields)%2 == 0, // Alternate between short and long fields
-		})
+		fieldsBlock := slack.NewSectionBlock(nil, fields, nil)
+		blockSet = append(blockSet, fieldsBlock)
 	}
 
-	return fields
+	// 4. HTML Section (if enabled)
+	if s.slackConfig.MessageFormat.EnableHTML && msg.HTML != "" {
+		// Slack doesn't support HTML directly, so we just append it as code block or text
+		htmlText := slack.NewTextBlockObject(slack.MarkdownType, "```\n"+msg.HTML+"\n```", false, false)
+		htmlBlock := slack.NewSectionBlock(htmlText, nil, nil)
+		blockSet = append(blockSet, htmlBlock)
+	}
+
+	// 5. Action Section (Button)
+	if msg.Link != "" {
+		btnTxt := slack.NewTextBlockObject(slack.PlainTextType, "Open in Harbor", false, false)
+		btn := slack.NewButtonBlockElement("action_open_harbor", "open_harbor", btnTxt)
+		btn.URL = msg.Link
+		btn.Style = slack.StylePrimary
+
+		actionBlock := slack.NewActionBlock("actions", btn)
+		blockSet = append(blockSet, actionBlock)
+	}
+
+	// 6. Context Section (Footer)
+	contextElements := []slack.MixedElement{
+		slack.NewTextBlockObject(slack.MarkdownType, fmt.Sprintf("Time: %s", time.Now().Format(time.RFC3339)), false, false),
+	}
+	if s.slackConfig.MessageFormat.CustomSuffix != "" {
+		contextElements = append(contextElements, slack.NewTextBlockObject(slack.MarkdownType, s.slackConfig.MessageFormat.CustomSuffix, false, false))
+	}
+
+	contextBlock := slack.NewContextBlock("context", contextElements...)
+	blockSet = append(blockSet, contextBlock)
+
+	return slack.Blocks{
+		BlockSet: blockSet,
+	}
+}
+
+// getSeverityColor returns the hex color for the highest severity in the message
+func (s *Slack) getSeverityColor(msg *Message) string {
+	// Check label first
+	if severity := msg.Labels["severity"]; severity != "" {
+		return s.resolveSeverityColor(severity)
+	}
+
+	// Check metadata
+	if msg.Metadata != nil {
+		if severity, ok := msg.Metadata["severity"].(string); ok {
+			return s.resolveSeverityColor(severity)
+		}
+	}
+
+	// Check summary counts - prioritize critical > high > medium
+	if len(msg.SeverityCounts) > 0 {
+		if msg.SeverityCounts["Critical"] > 0 {
+			return s.resolveSeverityColor("critical")
+		} else if msg.SeverityCounts["High"] > 0 {
+			return s.resolveSeverityColor("high")
+		} else if msg.SeverityCounts["Medium"] > 0 {
+			return s.resolveSeverityColor("medium")
+		}
+	}
+
+	return "#36a64f" // Default Green
+}
+
+func (s *Slack) resolveSeverityColor(severity string) string {
+	switch strings.ToLower(severity) {
+	case "critical":
+		if s.slackConfig.MessageFormat.SeverityColors.Critical != "" {
+			return s.slackConfig.MessageFormat.SeverityColors.Critical
+		}
+		return "#DC143C"
+	case "high":
+		if s.slackConfig.MessageFormat.SeverityColors.High != "" {
+			return s.slackConfig.MessageFormat.SeverityColors.High
+		}
+		return "#FF8C00"
+	case "medium":
+		if s.slackConfig.MessageFormat.SeverityColors.Medium != "" {
+			return s.slackConfig.MessageFormat.SeverityColors.Medium
+		}
+		return "#FFD700"
+	case "low":
+		if s.slackConfig.MessageFormat.SeverityColors.Low != "" {
+			return s.slackConfig.MessageFormat.SeverityColors.Low
+		}
+		return "#32CD32"
+	default:
+		return "#36a64f"
+	}
+}
+
+// getSeverityIcon returns icon for severity
+func (s *Slack) getSeverityIcon(severity string) string {
+	// Fallback icons
+	switch strings.ToLower(severity) {
+	case "critical":
+		return "🔴"
+	case "high":
+		return "🟠"
+	case "medium":
+		return "🟡"
+	case "low":
+		return "🟢"
+	default:
+		return "⚪"
+	}
 }
 
 // escapeMarkdown escapes special characters in Markdown

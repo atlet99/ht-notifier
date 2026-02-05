@@ -83,11 +83,21 @@ func NewTelegram(cfg *config.TelegramConfig, limiter RateLimiter) (*Telegram, er
 		}
 	}
 
+	// Set API Base URL if configured
+	if cfg.APIBaseURL != "" {
+		opts = append(opts, bot.WithServerURL(cfg.APIBaseURL))
+	}
+
 	// Create bot instance
 	b, err := bot.New(cfg.BotToken, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Telegram bot: %w", err)
 	}
+
+	// Register command handlers
+	b.RegisterHandler(bot.HandlerTypeMessageText, "/start", bot.MatchTypeExact, startHandler)
+	b.RegisterHandler(bot.HandlerTypeMessageText, "/status", bot.MatchTypeExact, statusHandler)
+	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, "ack", bot.MatchTypePrefix, callbackHandler)
 
 	// Test bot connection
 	ctx, cancel := context.WithTimeout(context.Background(), cfg.Timeout)
@@ -134,15 +144,32 @@ func (t *Telegram) Send(ctx context.Context, msg *Message) error {
 		ParseMode: "Markdown",
 	}
 
-	// Add inline keyboard if link is provided
+	// Add inline keyboard
+	var buttons []models.InlineKeyboardButton
+
+	// 1. Link Button
 	if msg.Link != "" {
+		buttons = append(buttons, models.InlineKeyboardButton{
+			Text: "Open in Harbor",
+			URL:  msg.Link, // Corrected from "url:" prefix which is likely wrong for the struct field, usually it's just the URL string
+		})
+	}
+
+	// 2. Acknowledge Button (Interactive)
+	// We use a simple callback data with ID or timestamp to identify the message
+	buttons = append(buttons, models.InlineKeyboardButton{
+		Text:         "👀 Acknowledge",
+		CallbackData: fmt.Sprintf("ack:%d", time.Now().Unix()),
+	})
+
+	if len(buttons) > 0 {
+		// Arrange in rows (1 per row for now)
+		rows := make([][]models.InlineKeyboardButton, len(buttons))
+		for i, btn := range buttons {
+			rows[i] = []models.InlineKeyboardButton{btn}
+		}
 		params.ReplyMarkup = &models.InlineKeyboardMarkup{
-			InlineKeyboard: [][]models.InlineKeyboardButton{{
-				{
-					Text: "Open in Harbor",
-					URL:  "url:" + msg.Link,
-				},
-			}},
+			InlineKeyboard: rows,
 		}
 	}
 
@@ -178,8 +205,42 @@ func (t *Telegram) formatMessage(msg *Message) string {
 
 // defaultHandler is the default handler for bot updates
 func defaultHandler(_ context.Context, _ *bot.Bot, _ *models.Update) {
-	// This handler is called for all updates, but we don't need to handle anything
-	// for the notifier functionality
+	// This handler is called for all unhandled updates
+}
+
+// startHandler handles the /start command
+func startHandler(ctx context.Context, b *bot.Bot, update *models.Update) {
+	b.SendMessage(ctx, &bot.SendMessageParams{
+		ChatID: update.Message.Chat.ID,
+		Text:   "Welcome to Harbor Notifier Bot! 🛡️\nI will notify you about Harbor events.",
+	})
+}
+
+// statusHandler handles the /status command
+func statusHandler(ctx context.Context, b *bot.Bot, update *models.Update) {
+	b.SendMessage(ctx, &bot.SendMessageParams{
+		ChatID: update.Message.Chat.ID,
+		Text:   "Bot is running and operational. ✅",
+	})
+}
+
+// callbackHandler handles callback queries (e.g. Acknowledge button)
+func callbackHandler(ctx context.Context, b *bot.Bot, update *models.Update) {
+	// Answer the callback query to stop the loading animation
+	b.AnswerCallbackQuery(ctx, &bot.AnswerCallbackQueryParams{
+		CallbackQueryID: update.CallbackQuery.ID,
+		Text:            "Acknowledged!",
+	})
+
+	// Optionally edit the message text or buttons to show acknowledgement
+	// For now, we just reply with a text confirmation or just answer the query
+	// Let's send a small text message to confirm
+	/*
+		b.SendMessage(ctx, &bot.SendMessageParams{
+			ChatID: update.CallbackQuery.Message.Chat.ID,
+			Text:   "Alert acknowledged by user.",
+		})
+	*/
 }
 
 // ValidateTelegramConfig validates Telegram configuration
@@ -222,8 +283,9 @@ func parseChatID(chatIDStr string) (int64, error) {
 // escapeMarkdownV2 escapes special characters in MarkdownV2 format
 func escapeMarkdownV2(text string) string {
 	// MarkdownV2 special characters that need escaping
+	// Backslash must be escaped first to avoid double escaping
 	escapeChars := []string{
-		"_", "*", "[", "]", "(", ")", "~", "`", ">", "#", "+", "-", "=", "|", "{", "}", ".", "!",
+		"\\", "_", "*", "[", "]", "(", ")", "~", "`", ">", "#", "+", "-", "=", "|", "{", "}", ".", "!",
 	}
 
 	// Escape each character individually

@@ -181,7 +181,7 @@ func createNotifiers(cfg *config.Config, logger *zap.Logger) ([]notif.Notifier, 
 
 	// Create Slack notifier if enabled
 	if cfg.Notify.Slack.Enabled {
-		slackNotifier, err := notif.NewSlack(&cfg.Notify.Slack, limiter)
+		slackNotifier, err := notif.NewSlack(&cfg.Notify.Slack, limiter, logger)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create slack notifier: %w", err)
 		}

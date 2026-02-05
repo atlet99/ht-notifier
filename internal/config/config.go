@@ -126,6 +126,7 @@ type TelegramConfig struct {
 	Enabled       bool                `yaml:"enabled" mapstructure:"enabled"`
 	BotToken      string              `yaml:"bot_token" mapstructure:"bot_token"`
 	ChatID        string              `yaml:"chat_id" mapstructure:"chat_id"`
+	APIBaseURL    string              `yaml:"api_base_url" mapstructure:"api_base_url"`
 	Timeout       time.Duration       `yaml:"timeout" mapstructure:"timeout"`
 	RatePerMinute int                 `yaml:"rate_per_minute" mapstructure:"rate_per_minute"`
 	Debug         bool                `yaml:"debug" mapstructure:"debug"`
