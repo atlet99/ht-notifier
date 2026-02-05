@@ -1,13 +1,15 @@
-# Makefile for Harbor Webhook Notifier
-# Based on Go 1.24+ best practices
+.PHONY: help build test fmt lint vet clean run deps tidy update install-tools check-all fix-all tag push-tag release
 
-# Variables
+# Version information
+VERSION_FILE := .release-version
+VERSION := $(shell if [ -f $(VERSION_FILE) ]; then cat $(VERSION_FILE) | tr -d '[:space:]'; else echo "dev"; fi)
+COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+DATE := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
+
+# Module path
 MODULE := github.com/atlet99/ht-notifier
-VERSION := $(shell cat .release-version)
-COMMIT  := $(shell git rev-parse --short HEAD 2>/dev/null || echo 'none')
-DATE    := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 
-# Build flags
+# LDFLAGS for version injection
 LDFLAGS := -X '$(MODULE)/internal/version.Version=$(VERSION)' \
            -X '$(MODULE)/internal/version.Commit=$(COMMIT)' \
            -X '$(MODULE)/internal/version.Date=$(DATE)' \
@@ -20,350 +22,150 @@ CGO_ENABLED := 0
 # Directories
 BIN_DIR := bin
 DIST_DIR := dist
-CONFIG_DIR := config
-LOGS_DIR := logs
 
-# Default target
-.PHONY: all
-all: clean build test
+help: ## Show this help message
+	@echo 'Usage: make [target]'
+	@echo ''
+	@echo 'Available targets:'
+	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z_-]+:.*?## / {printf "  %-15s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
-# Build targets
-.PHONY: build
-build: $(BIN_DIR)/ht-notifier
-
-$(BIN_DIR)/ht-notifier:
-	@echo "Building ht-notifier..."
+build: ## Build the application
+	@echo "Building ht-notifier (version: $(VERSION), commit: $(COMMIT))..."
 	@mkdir -p $(BIN_DIR)
-	GOFLAGS=$(GOFLAGS) CGO_ENABLED=$(CGO_ENABLED) go build \
-		-ldflags="$(LDFLAGS)" \
-		-o $(BIN_DIR)/ht-notifier \
-		./cmd/server
+	@GOFLAGS=$(GOFLAGS) CGO_ENABLED=$(CGO_ENABLED) go build -ldflags "$(LDFLAGS)" -trimpath -o $(BIN_DIR)/ht-notifier ./cmd/server
+	@echo "Building github-extractor (version: $(VERSION), commit: $(COMMIT))..."
+	@GOFLAGS=$(GOFLAGS) CGO_ENABLED=$(CGO_ENABLED) go build -ldflags "$(LDFLAGS)" -trimpath -o $(BIN_DIR)/github-extractor ./cmd/github-extractor
+	@echo "Building slack-extractor (version: $(VERSION), commit: $(COMMIT))..."
+	@GOFLAGS=$(GOFLAGS) CGO_ENABLED=$(CGO_ENABLED) go build -ldflags "$(LDFLAGS)" -trimpath -o $(BIN_DIR)/slack-extractor ./cmd/slack-extractor
 
-# Cross-platform builds
-.PHONY: build-all
-build-all: build-linux-amd64 build-linux-arm64 build-darwin-amd64 build-darwin-arm64 build-windows-amd64
+test: ## Run tests
+	go test -v -race -coverprofile=coverage.out ./...
 
-.PHONY: build-linux-amd64
-build-linux-amd64:
-	@echo "Building for Linux AMD64..."
-	@mkdir -p $(DIST_DIR)
-	GOOS=linux GOARCH=amd64 CGO_ENABLED=$(CGO_ENABLED) GOFLAGS=$(GOFLAGS) go build \
-		-ldflags="$(LDFLAGS)" \
-		-o $(DIST_DIR)/ht-notifier-linux-amd64 \
-		./cmd/server
-
-.PHONY: build-linux-arm64
-build-linux-arm64:
-	@echo "Building for Linux ARM64..."
-	@mkdir -p $(DIST_DIR)
-	GOOS=linux GOARCH=arm64 CGO_ENABLED=$(CGO_ENABLED) GOFLAGS=$(GOFLAGS) go build \
-		-ldflags="$(LDFLAGS)" \
-		-o $(DIST_DIR)/ht-notifier-linux-arm64 \
-		./cmd/server
-
-.PHONY: build-darwin-amd64
-build-darwin-amd64:
-	@echo "Building for Darwin AMD64..."
-	@mkdir -p $(DIST_DIR)
-	GOOS=darwin GOARCH=amd64 CGO_ENABLED=$(CGO_ENABLED) GOFLAGS=$(GOFLAGS) go build \
-		-ldflags="$(LDFLAGS)" \
-		-o $(DIST_DIR)/ht-notifier-darwin-amd64 \
-		./cmd/server
-
-.PHONY: build-darwin-arm64
-build-darwin-arm64:
-	@echo "Building for Darwin ARM64..."
-	@mkdir -p $(DIST_DIR)
-	GOOS=darwin GOARCH=arm64 CGO_ENABLED=$(CGO_ENABLED) GOFLAGS=$(GOFLAGS) go build \
-		-ldflags="$(LDFLAGS)" \
-		-o $(DIST_DIR)/ht-notifier-darwin-arm64 \
-		./cmd/server
-
-.PHONY: build-windows-amd64
-build-windows-amd64:
-	@echo "Building for Windows AMD64..."
-	@mkdir -p $(DIST_DIR)
-	GOOS=windows GOARCH=amd64 CGO_ENABLED=$(CGO_ENABLED) GOFLAGS=$(GOFLAGS) go build \
-		-ldflags="$(LDFLAGS)" \
-		-o $(DIST_DIR)/ht-notifier-windows-amd64.exe \
-		./cmd/server
-
-# Docker build
-.PHONY: docker
-docker:
-	@echo "Building Docker image..."
-	@docker build \
-		--build-arg VERSION=$(VERSION) \
-		--build-arg COMMIT=$(COMMIT) \
-		--build-arg DATE=$(DATE) \
-		-t $(MODULE):$(VERSION) \
-		.
-
-.PHONY: docker-push
-docker-push:
-	@echo "Pushing Docker image..."
-	@docker push $(MODULE):$(VERSION)
-
-# Run targets
-.PHONY: run
-run: build
-	@echo "Running ht-notifier..."
-	@mkdir -p $(LOGS_DIR)
-	@./$(BIN_DIR)/ht-notifier --config $(CONFIG_DIR)/config.yaml
-
-.PHONY: run-dev
-run-dev: build
-	@echo "Running ht-notifier in development mode..."
-	@mkdir -p $(LOGS_DIR)
-	@./$(BIN_DIR)/ht-notifier --config $(CONFIG_DIR)/config.example.yaml
-
-# Test targets
-.PHONY: test
-test:
-	@echo "Running tests..."
-	@go test ./... -race -shuffle=on -v
-
-.PHONY: test-unit
-test-unit:
-	@echo "Running unit tests..."
-	@go test ./... -run Unit -v
-
-.PHONY: test-integration
-test-integration:
-	@echo "Running integration tests..."
-	@go test ./... -run Integration -v
-
-.PHONY: test-coverage
-test-coverage:
-	@echo "Running tests with coverage..."
-	@go test ./... -race -shuffle=on -coverprofile=coverage.out -covermode=atomic
-	@go tool cover -html=coverage.out -o coverage.html
+test-coverage: test ## Run tests with coverage report
+	go tool cover -html=coverage.out -o coverage.html
 	@echo "Coverage report generated: coverage.html"
 
-# Lint targets
-.PHONY: lint
-lint:
-	@echo "Running linter..."
-	@golangci-lint run
+fmt: ## Format code
+	go fmt ./...
+	@if command -v goimports > /dev/null; then \
+		goimports -w .; \
+	else \
+		echo "goimports not found, install with: go install golang.org/x/tools/cmd/goimports@latest"; \
+	fi
 
-.PHONY: fmt
-fmt:
-	@echo "Formatting code..."
-	@go fmt ./...
+lint: ## Run linter
+	@if command -v golangci-lint > /dev/null; then \
+		golangci-lint run; \
+	else \
+		echo "golangci-lint not found, install with: make install-tools"; \
+	fi
 
-.PHONY: vet
-vet:
-	@echo "Running go vet..."
-	@go vet ./...
+vet: ## Run go vet
+	go vet ./...
 
-# Quality targets
-.PHONY: quality
-quality: fmt vet lint test
+clean: ## Clean build artifacts
+	rm -rf $(BIN_DIR) $(DIST_DIR) coverage.out coverage.html
 
-# Docker compose targets
-.PHONY: docker-up
-docker-up:
-	@echo "Starting Docker services..."
-	@docker-compose up -d
+run: build ## Run the server
+	./$(BIN_DIR)/ht-notifier
 
-.PHONY: docker-down
-docker-down:
-	@echo "Stopping Docker services..."
-	@docker-compose down
+deps: ## Download dependencies
+	go mod download
 
-.PHONY: docker-logs
-docker-logs:
-	@echo "Showing Docker logs..."
-	@docker-compose logs -f
+tidy: ## Tidy dependencies
+	go mod tidy
 
-.PHONY: docker-clean
-docker-clean:
-	@echo "Cleaning Docker containers and volumes..."
-	@docker-compose down -v
-	@docker system prune -f
+update: ## Update all dependencies to latest versions and create commit
+	@./hack/update-deps.sh
 
-# Development targets
-.PHONY: dev
-dev: docker-up
-	@echo "Development environment started"
-	@echo "Services available:"
-	@echo "  - Harbor: http://localhost"
-	@echo "  - Grafana: http://localhost:3000"
-	@echo "  - Prometheus: http://localhost:9091"
-	@echo "  - Notifier: http://localhost:8080"
+check-all: copyright-check ## Run all checks (copyright, format, goimports, lint)
+	@echo "Checking code formatting (gofmt)..."
+	@if find . -name "*.go" -not -path "./vendor/*" -not -path "./.git/*" | xargs gofmt -l | grep -q .; then \
+		echo "❌ gofmt found issues. Run 'make fix-all' to fix."; \
+		find . -name "*.go" -not -path "./vendor/*" -not -path "./.git/*" | xargs gofmt -l; \
+		exit 1; \
+	fi
+	@echo "✅ gofmt check passed"
+	@if command -v goimports > /dev/null; then \
+		echo "Running goimports check..."; \
+		if find . -name "*.go" -not -path "./vendor/*" -not -path "./.git/*" | xargs goimports -d | grep -q .; then \
+			echo "❌ goimports found issues. Run 'make fix-all' to fix."; \
+			exit 1; \
+		fi; \
+		echo "✅ goimports check passed"; \
+	else \
+		echo "⚠️  goimports not found, skipping check. Install with: go install golang.org/x/tools/cmd/goimports@latest"; \
+	fi
+	@echo "Running linter (golangci-lint)..."
+	@if command -v golangci-lint > /dev/null; then \
+		golangci-lint run; \
+		if [ $$? -eq 0 ]; then \
+			echo "✅ linter check passed"; \
+		else \
+			echo "❌ linter found issues."; \
+			exit 1; \
+		fi; \
+	else \
+		echo "⚠️  golangci-lint not found, skipping check. Install with: make install-tools"; \
+	fi
 
-# Documentation targets
-.PHONY: docs
-docs:
-	@echo "Generating documentation..."
-	@go doc ./...
+fix-all: copyright-add fmt ## Fix all issues (copyright, format, goimports)
+	@if command -v goimports > /dev/null; then \
+		echo "Running goimports to fix imports..."; \
+		find . -name "*.go" -not -path "./vendor/*" -not -path "./.git/*" | xargs goimports -w; \
+		echo "✅ goimports fixes applied"; \
+	else \
+		echo "⚠️  goimports not found, skipping. Install with: go install golang.org/x/tools/cmd/goimports@latest"; \
+	fi
+	@echo "✅ All fixes applied"
 
-# Version targets
-.PHONY: version
-version:
-	@echo "Version: $(VERSION)"
-	@echo "Commit: $(COMMIT)"
-	@echo "Date: $(DATE)"
+check: fmt vet lint test ## Run all checks (format, vet, lint, test)
 
-.PHONY: bump-version
-bump-version:
-	@echo "Current version: $(VERSION)"
-	@read -p "Enter new version: " new_version && \
-		echo "$$new_version" > .release-version && \
-		echo "Version bumped to: $$new_version"
+install-tools: ## Install development tools
+	@echo "Installing development tools..."
+	@go install golang.org/x/tools/cmd/goimports@latest
+	@go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest
+	@echo "Tools installed successfully"
 
-# Clean targets
-.PHONY: clean
-clean:
-	@echo "Cleaning build artifacts..."
-	@rm -rf $(BIN_DIR)
-	@rm -rf $(DIST_DIR)
-	@rm -rf coverage.out coverage.html
-	@go clean -cache
+copyright-check: ## Check copyright headers
+	@./hack/check-copyright.sh
 
-.PHONY: clean-deps
-clean-deps:
-	@echo "Cleaning dependencies..."
-	@go clean -modcache
-	@rm -rf vendor
+copyright-add: ## Add copyright headers to files
+	@./hack/add-copyright.sh
 
-# Release targets
-.PHONY: release
-release: build-all docker
-	@echo "Creating release artifacts..."
-	@mkdir -p release
-	@cp $(DIST_DIR)/* release/
-	@echo "Release artifacts created in release/ directory"
+copyright-update: ## Update copyright year
+	@./hack/update-copyright.sh
 
-.PHONY: release-check
-release-check: build-all test lint
-	@echo "Release check completed successfully"
+update-version: ## Update version in .release-version based on current phase in .plan-docs.md
+	@./hack/update-version.sh
 
-# Security targets
-.PHONY: security
-security:
-	@echo "Running security checks..."
-	@gosec ./...
-	@echo "Security check completed"
+changelog: ## Generate CHANGELOG.md from git commits
+	@./hack/generate-changelog.sh
 
-# Help target
-.PHONY: help
-help:
-	@echo "Available targets:"
-	@echo "  all           - Clean, build, and test"
-	@echo "  build         - Build the application"
-	@echo "  build-all     - Build for all platforms"
-	@echo "  docker        - Build Docker image"
-	@echo "  docker-push   - Push Docker image"
-	@echo "  run           - Run the application"
-	@echo "  run-dev       - Run in development mode"
-	@echo "  test          - Run all tests"
-	@echo "  test-unit     - Run unit tests"
-	@echo "  test-integration - Run integration tests"
-	@echo "  test-coverage - Run tests with coverage"
-	@echo "  lint          - Run linter"
-	@echo "  fmt           - Format code"
-	@echo "  vet           - Run go vet"
-	@echo "  quality       - Run quality checks (fmt, vet, lint, test)"
-	@echo "  docker-up     - Start Docker services"
-	@echo "  docker-down   - Stop Docker services"
-	@echo "  docker-logs   - Show Docker logs"
-	@echo "  docker-clean  - Clean Docker environment"
-	@echo "  dev           - Start development environment"
-	@echo "  docs          - Generate documentation"
-	@echo "  version       - Show version information"
-	@echo "  bump-version  - Bump version number"
-	@echo "  clean         - Clean build artifacts"
-	@echo "  clean-deps    - Clean dependencies"
-	@echo "  release       - Create release artifacts"
-	@echo "  release-check - Run release checks"
-	@echo "  security      - Run security checks"
-	@echo "  help          - Show this help message"
+tag: ## Create git tag from .release-version
+	@if [ ! -f $(VERSION_FILE) ]; then \
+		echo "Error: $(VERSION_FILE) not found"; \
+		exit 1; \
+	fi
+	@TAG_VERSION="v$(VERSION)"; \
+	if git rev-parse "$$TAG_VERSION" >/dev/null 2>&1; then \
+		echo "Error: Tag $$TAG_VERSION already exists"; \
+		exit 1; \
+	fi; \
+	echo "Creating tag $$TAG_VERSION..."; \
+	git tag -a "$$TAG_VERSION" -m "Release $$TAG_VERSION"; \
+	echo "✅ Tag $$TAG_VERSION created"
 
-# Check if required tools are available
-check-tools:
-	@echo "Checking required tools..."
-	@command -v go >/dev/null 2>&1 || { echo "Go is required but not installed."; exit 1; }
-	@command -v docker >/dev/null 2>&1 || { echo "Docker is required but not installed."; exit 1; }
-	@command -v golangci-lint >/dev/null 2>&1 || { echo "golangci-lint is required but not installed."; exit 1; }
-	@echo "All required tools are available"
+push-tag: tag ## Create tag and push to remote repository
+	@TAG_VERSION="v$(VERSION)"; \
+	CURRENT_BRANCH=$$(git branch --show-current 2>/dev/null || echo ""); \
+	REMOTE=$$(git config branch.$$CURRENT_BRANCH.remote 2>/dev/null || echo "origin"); \
+	if [ -z "$$REMOTE" ] || [ "$$REMOTE" = "" ]; then \
+		REMOTE="origin"; \
+	fi; \
+	echo "Pushing tag $$TAG_VERSION to $$REMOTE..."; \
+	git push $$REMOTE "$$TAG_VERSION"; \
+	echo "✅ Tag $$TAG_VERSION pushed to $$REMOTE"
 
-# Initialize development environment
-.PHONY: init
-init: check-tools
-	@echo "Initializing development environment..."
-	@go mod download
-	@go mod tidy
-	@mkdir -p $(CONFIG_DIR) $(LOGS_DIR)
-	@cp config.example.yaml $(CONFIG_DIR)/config.yaml
-	@echo "Development environment initialized"
-	@echo "Edit $(CONFIG_DIR)/config.yaml with your settings"
-
-# Development workflow
-.PHONY: dev-workflow
-dev-workflow: init fmt vet lint test run
-
-# Production deployment
-.PHONY: deploy
-deploy: release-check docker-push
-	@echo "Deployment completed successfully"
-
-# Monitoring targets
-.PHONY: metrics
-metrics:
-	@echo "Fetching metrics..."
-	@curl -s http://localhost:8080/metrics | head -20
-
-.PHONY: health
-health:
-	@echo "Checking health..."
-	@curl -s http://localhost:8080/healthz | jq .
-
-.PHONY: ready
-ready:
-	@echo "Checking readiness..."
-	@curl -s http://localhost:8080/readyz | jq .
-
-# Performance targets
-.PHONY: benchmark
-benchmark:
-	@echo "Running benchmarks..."
-	@go test -bench=. -benchmem ./...
-
-# Profile targets
-.PHONY: profile-cpu
-profile-cpu:
-	@echo "Generating CPU profile..."
-	@go test -cpuprofile=cpu.prof -bench=. ./...
-	@echo "CPU profile generated: cpu.prof"
-
-.PHONY: profile-mem
-profile-mem:
-	@echo "Generating memory profile..."
-	@go test -memprofile=mem.prof -bench=. ./...
-	@echo "Memory profile generated: mem.prof"
-
-# Debug targets
-.PHONY: debug
-debug: build
-	@echo "Starting debug server..."
-	@dlv debug ./cmd/server
-
-# Database targets (if needed)
-.PHONY: db-migrate
-db-migrate:
-	@echo "Running database migrations..."
-	# Add database migration commands here
-
-.PHONY: db-seed
-db-seed:
-	@echo "Seeding database..."
-	# Add database seeding commands here
-
-# Backup targets
-.PHONY: backup-config
-backup-config:
-	@echo "Backing up configuration..."
-	@mkdir -p backup
-	@cp -r $(CONFIG_DIR) backup/config-$(shell date +%Y%m%d-%H%M%S)
-	@echo "Configuration backed up to backup/config-$(shell date +%Y%m%d-%H%M%S)"
+release: changelog push-tag ## Create release: update changelog, create tag and push
+	@echo "✅ Release $(VERSION) created and pushed"

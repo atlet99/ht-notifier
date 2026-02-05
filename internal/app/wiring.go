@@ -1,3 +1,17 @@
+// Copyright (c) 2025 Abdurakhman Rakhmankulov
+//
+// Licensed under the MIT License (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     https://opensource.org/licenses/MIT
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 // Package app provides application wiring and dependency injection.
 package app
 
@@ -102,7 +116,7 @@ func Wire(cfg *config.Config) (*App, error) {
 	httpHandler := httpx.NewHandler(cfg, logger, securityManager, eventProcessor, notifiers, healthChecker)
 
 	// Create application
-	app, err := New(cfg, logger, httpHandler, notifiers)
+	app, err := New(cfg, logger, httpHandler, notifiers, eventProcessor)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create application: %w", err)
 	}

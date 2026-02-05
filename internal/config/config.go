@@ -1,3 +1,17 @@
+// Copyright (c) 2025 Abdurakhman Rakhmankulov
+//
+// Licensed under the MIT License (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     https://opensource.org/licenses/MIT
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 // Package config provides configuration management for the ht-notifier application.
 package config
 
@@ -219,58 +233,23 @@ type EmailConfig struct {
 
 // SMTPConfig holds SMTP server configuration.
 type SMTPConfig struct {
-	Host                     string        `yaml:"host"`
-	Port                     int           `yaml:"port"`
-	Username                 string        `yaml:"username"`
-	Password                 string        `yaml:"password"`
-	From                     string        `yaml:"from"`
-	StartTLS                 bool          `yaml:"starttls"`
-	Timeout                  time.Duration `yaml:"timeout"`
-	AuthType                 string        `yaml:"auth_type"`  // "plain", "login", "crammd5", "scram", "xoauth2"
-	Encryption               string        `yaml:"encryption"` // "none", "ssl", "tls"
-	HELOHost                 string        `yaml:"helo_host"`
-	LocalName                string        `yaml:"local_name"`
-	DisableHELO              bool          `yaml:"disable_helo"`
-	DisableSTARTTLS          bool          `yaml:"disable_starttls"`
-	SSLInsecure              bool          `yaml:"ssl_insecure"`
-	SSNOCHECK                bool          `yaml:"ssl_nocertcheck"`
-	SSNoverify               bool          `yaml:"ssl_noverify"`
-	SSNoverifyHostname       bool          `yaml:"ssl_noverify_hostname"`
-	SSNoverifyCA             bool          `yaml:"ssl_noverify_ca"`
-	SSNoverifyCRL            bool          `yaml:"ssl_noverify_crl"`
-	SSNoverifyOCSP           bool          `yaml:"ssl_noverify_ocsp"`
-	SSNoverifySignature      bool          `yaml:"ssl_noverify_signature"`
-	SSNoverifyExtKeyUsage    bool          `yaml:"ssl_noverify_ext_key_usage"`
-	SSNoverifyKeyUsage       bool          `yaml:"ssl_noverify_key_usage"`
-	SSNoverifyServerName     bool          `yaml:"ssl_noverify_server_name"`
-	SSNoverifySubject        bool          `yaml:"ssl_noverify_subject"`
-	SSNoverifySANs           bool          `yaml:"ssl_noverify_sans"`
-	SSNoverifyEmail          bool          `yaml:"ssl_noverify_email"`
-	SSNoverifyIP             bool          `yaml:"ssl_noverify_ip"`
-	SSNoverifyDNS            bool          `yaml:"ssl_noverify_dns"`
-	SSNoverifyURIs           bool          `yaml:"ssl_noverify_uris"`
-	SSNoverifyOtherNames     bool          `yaml:"ssl_noverify_other_names"`
-	SSNoverifyAllNames       bool          `yaml:"ssl_noverify_all_names"`
-	SSNoverifyAnyName        bool          `yaml:"ssl_noverify_any_name"`
-	SSNoverifyNoNames        bool          `yaml:"ssl_noverify_no_names"`
-	SSNoverifyNoSANs         bool          `yaml:"ssl_noverify_no_sans"`
-	SSNoverifyNoEmail        bool          `yaml:"ssl_noverify_no_email"`
-	SSNoverifyNoIP           bool          `yaml:"ssl_noverify_no_ip"`
-	SSNoverifyNoDNS          bool          `yaml:"ssl_noverify_no_dns"`
-	SSNoverifyNoURIs         bool          `yaml:"ssl_noverify_no_uris"`
-	SSNoverifyNoOtherNames   bool          `yaml:"ssl_noverify_no_other_names"`
-	SSNoverifyNoAllNames     bool          `yaml:"ssl_noverify_no_all_names"`
-	SSNoverifyNoAnyName      bool          `yaml:"ssl_noverify_no_any_name"`
-	SSNoverifyNoNoNames      bool          `yaml:"ssl_noverify_no_no_names"`
-	SSNoverifyNoNoSANs       bool          `yaml:"ssl_noverify_no_no_sans"`
-	SSNoverifyNoNoEmail      bool          `yaml:"ssl_noverify_no_no_email"`
-	SSNoverifyNoNoIP         bool          `yaml:"ssl_noverify_no_no_ip"`
-	SSNoverifyNoNoDNS        bool          `yaml:"ssl_noverify_no_no_dns"`
-	SSNoverifyNoNoURIs       bool          `yaml:"ssl_noverify_no_no_uris"`
-	SSNoverifyNoNoOtherNames bool          `yaml:"ssl_noverify_no_no_other_names"`
-	SSNoverifyNoNoAllNames   bool          `yaml:"ssl_noverify_no_no_all_names"`
-	SSNoverifyNoNoAnyName    bool          `yaml:"ssl_noverify_no_no_any_name"`
-	SSNoverifyNoNoNoNames    bool          `yaml:"ssl_noverify_no_no_no_names"`
+	Host               string        `yaml:"host"`
+	Port               int           `yaml:"port"`
+	Username           string        `yaml:"username"`
+	Password           string        `yaml:"password"`
+	From               string        `yaml:"from"`
+	StartTLS           bool          `yaml:"starttls"`
+	Timeout            time.Duration `yaml:"timeout"`
+	AuthType           string        `yaml:"auth_type"`  // "plain", "login", "crammd5", "scram", "xoauth2"
+	Encryption         string        `yaml:"encryption"` // "none", "ssl", "tls"
+	HELOHost           string        `yaml:"helo_host"`
+	LocalName          string        `yaml:"local_name"`
+	DisableHELO        bool          `yaml:"disable_helo"`
+	DisableSTARTTLS    bool          `yaml:"disable_starttls"`
+	SSLInsecure        bool          `yaml:"ssl_insecure"`
+	SSNOCHECK          bool          `yaml:"ssl_nocertcheck"`
+	SSNoverify         bool          `yaml:"ssl_noverify"`
+	SSNoverifyHostname bool          `yaml:"ssl_noverify_hostname"` // Skip hostname verification in SSL certificate
 }
 
 // ProcessingConfig holds event processing configuration.
@@ -904,44 +883,9 @@ func setEmailSMTPDefaults(v *viper.Viper) {
 
 func setEmailSSLDefaults(v *viper.Viper) {
 	v.SetDefault("notify.email.smtp.ssl_insecure", false)
-	v.SetDefault("notify.email.smtp.ssl_nocertcheck", false)
-	v.SetDefault("notify.email.smtp.ssl_noverify", false)
+	v.SetDefault("notify.email.smtp.ssl_nocertcheck", false) // Deprecated: use ssl_insecure
+	v.SetDefault("notify.email.smtp.ssl_noverify", false)    // Deprecated: use ssl_insecure
 	v.SetDefault("notify.email.smtp.ssl_noverify_hostname", false)
-	v.SetDefault("notify.email.smtp.ssl_noverify_ca", false)
-	v.SetDefault("notify.email.smtp.ssl_noverify_crl", false)
-	v.SetDefault("notify.email.smtp.ssl_noverify_ocsp", false)
-	v.SetDefault("notify.email.smtp.ssl_noverify_signature", false)
-	v.SetDefault("notify.email.smtp.ssl_noverify_ext_key_usage", false)
-	v.SetDefault("notify.email.smtp.ssl_noverify_key_usage", false)
-	v.SetDefault("notify.email.smtp.ssl_noverify_server_name", false)
-	v.SetDefault("notify.email.smtp.ssl_noverify_subject", false)
-	v.SetDefault("notify.email.smtp.ssl_noverify_sans", false)
-	v.SetDefault("notify.email.smtp.ssl_noverify_email", false)
-	v.SetDefault("notify.email.smtp.ssl_noverify_ip", false)
-	v.SetDefault("notify.email.smtp.ssl_noverify_dns", false)
-	v.SetDefault("notify.email.smtp.ssl_noverify_uris", false)
-	v.SetDefault("notify.email.smtp.ssl_noverify_other_names", false)
-	v.SetDefault("notify.email.smtp.ssl_noverify_all_names", false)
-	v.SetDefault("notify.email.smtp.ssl_noverify_any_name", false)
-	v.SetDefault("notify.email.smtp.ssl_noverify_no_names", false)
-	v.SetDefault("notify.email.smtp.ssl_noverify_no_sans", false)
-	v.SetDefault("notify.email.smtp.ssl_noverify_no_email", false)
-	v.SetDefault("notify.email.smtp.ssl_noverify_no_ip", false)
-	v.SetDefault("notify.email.smtp.ssl_noverify_no_dns", false)
-	v.SetDefault("notify.email.smtp.ssl_noverify_no_uris", false)
-	v.SetDefault("notify.email.smtp.ssl_noverify_no_other_names", false)
-	v.SetDefault("notify.email.smtp.ssl_noverify_no_all_names", false)
-	v.SetDefault("notify.email.smtp.ssl_noverify_no_any_name", false)
-	v.SetDefault("notify.email.smtp.ssl_noverify_no_no_names", false)
-	v.SetDefault("notify.email.smtp.ssl_noverify_no_no_sans", false)
-	v.SetDefault("notify.email.smtp.ssl_noverify_no_no_email", false)
-	v.SetDefault("notify.email.smtp.ssl_noverify_no_no_ip", false)
-	v.SetDefault("notify.email.smtp.ssl_noverify_no_no_dns", false)
-	v.SetDefault("notify.email.smtp.ssl_noverify_no_no_uris", false)
-	v.SetDefault("notify.email.smtp.ssl_noverify_no_no_other_names", false)
-	v.SetDefault("notify.email.smtp.ssl_noverify_no_no_all_names", false)
-	v.SetDefault("notify.email.smtp.ssl_noverify_no_no_any_name", false)
-	v.SetDefault("notify.email.smtp.ssl_noverify_no_no_no_names", false)
 }
 
 func setProcessingDefaults(v *viper.Viper) {

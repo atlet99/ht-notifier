@@ -1,3 +1,17 @@
+// Copyright (c) 2025 Abdurakhman Rakhmankulov
+//
+// Licensed under the MIT License (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     https://opensource.org/licenses/MIT
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 // Package proc provides event processing functionality.
 package proc
 
@@ -13,13 +27,12 @@ import (
 	"github.com/atlet99/ht-notifier/internal/harbor"
 	"github.com/atlet99/ht-notifier/internal/notif"
 	"github.com/atlet99/ht-notifier/internal/obs"
+	"github.com/atlet99/ht-notifier/internal/util"
 )
 
 const (
 	queueWorkerRetryDelay = 100 * time.Millisecond
 	queueProcessTimeout   = 5 * time.Minute
-	jitterPercentage      = 0.25
-	jitterDivisor         = 2
 )
 
 // Event represents a processing event
@@ -254,18 +267,12 @@ func (w *Worker) processEvent(event *Event) {
 
 // calculateBackoff calculates exponential backoff with jitter
 func (w *Worker) calculateBackoff(attempt int) time.Duration {
-	// #nosec G115 -- attempt is bounded by MaxAttempts, overflow is not possible
-	backoff := w.retryConfig.InitialBackoff * time.Duration(1<<uint(attempt-1))
-	if backoff > w.retryConfig.MaxBackoff {
-		backoff = w.retryConfig.MaxBackoff
+	retryConfig := util.RetryConfig{
+		MaxAttempts:    w.retryConfig.MaxAttempts,
+		InitialBackoff: w.retryConfig.InitialBackoff,
+		MaxBackoff:     w.retryConfig.MaxBackoff,
 	}
-
-	// Add jitter (±25%)
-	jitter := float64(backoff) * jitterPercentage
-	jitterDuration := time.Duration(jitter)
-
-	jitterOffset := time.Duration(float64(jitterDuration) / jitterDivisor)
-	return backoff + jitterOffset - jitterOffset
+	return util.CalculateBackoff(attempt, retryConfig)
 }
 
 // Pool represents a worker pool
