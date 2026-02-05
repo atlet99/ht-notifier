@@ -2,10 +2,10 @@
 
 # Add or update copyright header in Go files
 set -euo pipefail
-COPYRIGHT="Copyright (c) 2025 Abdurakhman Rakhmankulov"
+COPYRIGHT="Copyright (c) $(date +%Y) Abdurakhman Rakhmankulov"
 
 # Go file copyright header (using // comments)
-GO_HEADER="// Copyright (c) 2025 Abdurakhman Rakhmankulov
+GO_HEADER="// $COPYRIGHT
 //
 // Licensed under the MIT License (the \"License\");
 // you may not use this file except in compliance with the License.
@@ -21,9 +21,9 @@ GO_HEADER="// Copyright (c) 2025 Abdurakhman Rakhmankulov
 
 # Find all Go files
 find . -name "*.go" -not -path "./vendor/*" -not -path "./.git/*" -not -path "./hack/*" | while read -r file; do
-    # Check if file already has correct copyright
-    if grep -q "$COPYRIGHT" "$file" 2>/dev/null; then
-        echo "✓ $file (already has correct copyright)"
+    # Check if file already has any copyright header
+    if head -n 20 "$file" | grep -i -q "Copyright" 2>/dev/null; then
+        echo "✓ $file (already has copyright)"
         continue
     fi
     

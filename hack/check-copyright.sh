@@ -2,7 +2,7 @@
 
 # Check that all Go files have correct copyright header
 set -euo pipefail
-COPYRIGHT="Copyright (c) 2025 Abdurakhman Rakhmankulov"
+COPYRIGHT="Copyright (c) $(date +%Y) Abdurakhman Rakhmankulov"
 ERRORS=0
 
 # Find all Go files and check copyright
