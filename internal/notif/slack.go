@@ -152,17 +152,21 @@ func (s *Slack) GetBotInfo(ctx context.Context) (*slack.Bot, error) {
 		return nil, err
 	}
 
-	// Get bot info
+	// Get auth info
 	authResp, err := s.api.AuthTestContext(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get auth info: %w", err)
 	}
 
-	// Note: GetBotInfoContext is not available in the slack-go library
-	// We'll return a placeholder implementation
-	return &slack.Bot{
-		ID: authResp.BotID,
-	}, nil
+	// Get bot info using correct API method
+	botInfo, err := s.api.GetBotInfoContext(ctx, slack.GetBotInfoParameters{
+		Bot: authResp.BotID,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to get bot info: %w", err)
+	}
+
+	return botInfo, nil
 }
 
 // CheckPermissions checks if the app has required permissions

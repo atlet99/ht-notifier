@@ -372,49 +372,46 @@ func (t *Telegram) DeleteWebhook(ctx context.Context) error {
 }
 
 // GetWebhookInfo gets information about the webhook
-func (t *Telegram) GetWebhookInfo(_ context.Context) (interface{}, error) {
-	// The go-telegram/bot library doesn't expose a direct GetWebhookInfo method
-	// This is kept for compatibility but returns basic info
-	return map[string]interface{}{
-		"url": "",
-	}, nil
+func (t *Telegram) GetWebhookInfo(ctx context.Context) (interface{}, error) {
+	info, err := t.bot.GetWebhookInfo(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get webhook info: %w", err)
+	}
+	return info, nil
 }
 
 // GetUpdates gets updates from Telegram (for polling mode)
-func (t *Telegram) GetUpdates(_ context.Context, _, _, _ int) ([]interface{}, error) {
-	// The go-telegram/bot library handles polling automatically
-	// This method is kept for compatibility but doesn't need manual implementation
+func (t *Telegram) GetUpdates(ctx context.Context, offset, limit, timeout int) ([]interface{}, error) {
+	// The go-telegram/bot library handles polling automatically via Start
+	// This method is kept for compatibility but doesn't need manual implementation for the library's polling loop
 	return []interface{}{}, nil
 }
 
 // ProcessUpdate processes a single update (for webhook mode)
-func (t *Telegram) ProcessUpdate(_ context.Context, _ *models.Update) {
-	// The go-telegram/bot library handles webhook processing automatically
-	// This method is kept for compatibility but doesn't need manual implementation
+func (t *Telegram) ProcessUpdate(ctx context.Context, update *models.Update) {
+	// The go-telegram/bot library handles webhook processing via WebhookHandler
+	// However, if we need to manually process an update:
+	t.bot.ProcessUpdate(ctx, update)
 }
 
 // WebhookHandler returns the HTTP handler for webhook mode
 func (t *Telegram) WebhookHandler() http.Handler {
-	// The go-telegram/bot library provides its own webhook handler
-	// This method is kept for compatibility but returns nil as the library handles it
-	return nil
+	return t.bot.WebhookHandler()
 }
 
 // Start starts the bot in polling mode
-func (t *Telegram) Start(_ context.Context) {
-	// The go-telegram/bot library handles polling automatically
-	// This method is kept for compatibility but doesn't need manual implementation
+func (t *Telegram) Start(ctx context.Context) {
+	t.bot.Start(ctx)
 }
 
 // StartWebhook starts the bot in webhook mode
-func (t *Telegram) StartWebhook(_ context.Context) {
-	// The go-telegram/bot library handles webhook setup automatically
-	// This method is kept for compatibility but doesn't need manual implementation
+func (t *Telegram) StartWebhook(ctx context.Context) {
+	t.bot.StartWebhook(ctx)
 }
 
 // Close closes the bot connection
 func (t *Telegram) Close() error {
 	// The go-telegram/bot library doesn't have an explicit Close method
-	// but we can stop the bot gracefully
+	// but we can rely on context cancellation in Start/StartWebhook to stop it
 	return nil
 }
