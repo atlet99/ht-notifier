@@ -113,7 +113,7 @@ func Wire(cfg *config.Config) (*App, error) {
 	)
 
 	// Create HTTP handler
-	httpHandler := httpx.NewHandler(cfg, logger, securityManager, eventProcessor, notifiers, healthChecker)
+	httpHandler := httpx.NewHandler(cfg, logger, securityManager, eventProcessor, notifiers, healthChecker, metrics)
 
 	// Create application
 	app, err := New(cfg, logger, httpHandler, notifiers, eventProcessor)

@@ -22,7 +22,6 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
-	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 
 	"github.com/atlet99/ht-notifier/internal/config"
@@ -95,9 +94,8 @@ func NewHandler(
 	eventProcessor *proc.HarborEventProcessor,
 	notifiers []notif.Notifier,
 	healthChecker *health.CompositeChecker,
+	webhookMetrics *obs.Metrics,
 ) *Handler {
-	// Create metrics
-	webhookMetrics := obs.NewMetrics(prometheus.DefaultRegisterer, "ht_notifier")
 
 	// Create authentication config
 	authConfig := AuthConfig{

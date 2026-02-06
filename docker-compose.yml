@@ -16,6 +16,8 @@ services:
     volumes:
       - ./config:/etc/notifier:ro
       - ./logs:/app/logs
+    env_file:
+      - .env
     environment:
       - CONFIG_FILE=/etc/notifier/config.yaml
       - LOG_LEVEL=${LOG_LEVEL:-info}

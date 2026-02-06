@@ -434,6 +434,9 @@ func defaultTemplateConfig() TemplateConfig {
 func Load(configPath string) (*Config, error) {
 	v := viper.New()
 
+	// Enable environment variable overrides with dot to underscore replacement
+	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
+
 	// Set defaults
 	setDefaults(v)
 
