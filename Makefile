@@ -77,6 +77,10 @@ clean: ## Clean build artifacts
 run: build ## Run the server
 	./$(BIN_DIR)/ht-notifier
 
+.PHONY: run-mock
+run-mock:
+	go run ./hack/mock-harbor/main.go
+
 deps: ## Download dependencies
 	go mod download
 
