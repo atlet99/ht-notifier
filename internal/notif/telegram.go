@@ -151,7 +151,7 @@ func (t *Telegram) Send(ctx context.Context, msg *Message) error {
 	if msg.Link != "" {
 		buttons = append(buttons, models.InlineKeyboardButton{
 			Text: "Open in Harbor",
-			URL:  msg.Link, // Corrected from "url:" prefix which is likely wrong for the struct field, usually it's just the URL string
+			URL:  msg.Link, // URL string for the button
 		})
 	}
 
@@ -165,8 +165,8 @@ func (t *Telegram) Send(ctx context.Context, msg *Message) error {
 	if len(buttons) > 0 {
 		// Arrange in rows (1 per row for now)
 		rows := make([][]models.InlineKeyboardButton, len(buttons))
-		for i, btn := range buttons {
-			rows[i] = []models.InlineKeyboardButton{btn}
+		for i := range buttons {
+			rows[i] = []models.InlineKeyboardButton{buttons[i]}
 		}
 		params.ReplyMarkup = &models.InlineKeyboardMarkup{
 			InlineKeyboard: rows,
@@ -210,7 +210,7 @@ func defaultHandler(_ context.Context, _ *bot.Bot, _ *models.Update) {
 
 // startHandler handles the /start command
 func startHandler(ctx context.Context, b *bot.Bot, update *models.Update) {
-	b.SendMessage(ctx, &bot.SendMessageParams{
+	_, _ = b.SendMessage(ctx, &bot.SendMessageParams{
 		ChatID: update.Message.Chat.ID,
 		Text:   "Welcome to Harbor Notifier Bot! 🛡️\nI will notify you about Harbor events.",
 	})
@@ -218,7 +218,7 @@ func startHandler(ctx context.Context, b *bot.Bot, update *models.Update) {
 
 // statusHandler handles the /status command
 func statusHandler(ctx context.Context, b *bot.Bot, update *models.Update) {
-	b.SendMessage(ctx, &bot.SendMessageParams{
+	_, _ = b.SendMessage(ctx, &bot.SendMessageParams{
 		ChatID: update.Message.Chat.ID,
 		Text:   "Bot is running and operational. ✅",
 	})
@@ -227,20 +227,10 @@ func statusHandler(ctx context.Context, b *bot.Bot, update *models.Update) {
 // callbackHandler handles callback queries (e.g. Acknowledge button)
 func callbackHandler(ctx context.Context, b *bot.Bot, update *models.Update) {
 	// Answer the callback query to stop the loading animation
-	b.AnswerCallbackQuery(ctx, &bot.AnswerCallbackQueryParams{
+	_, _ = b.AnswerCallbackQuery(ctx, &bot.AnswerCallbackQueryParams{
 		CallbackQueryID: update.CallbackQuery.ID,
 		Text:            "Acknowledged!",
 	})
-
-	// Optionally edit the message text or buttons to show acknowledgement
-	// For now, we just reply with a text confirmation or just answer the query
-	// Let's send a small text message to confirm
-	/*
-		b.SendMessage(ctx, &bot.SendMessageParams{
-			ChatID: update.CallbackQuery.Message.Chat.ID,
-			Text:   "Alert acknowledged by user.",
-		})
-	*/
 }
 
 // ValidateTelegramConfig validates Telegram configuration
@@ -443,7 +433,7 @@ func (t *Telegram) GetWebhookInfo(ctx context.Context) (interface{}, error) {
 }
 
 // GetUpdates gets updates from Telegram (for polling mode)
-func (t *Telegram) GetUpdates(ctx context.Context, offset, limit, timeout int) ([]interface{}, error) {
+func (t *Telegram) GetUpdates(_ context.Context, _, _, _ int) ([]interface{}, error) {
 	// The go-telegram/bot library handles polling automatically via Start
 	// This method is kept for compatibility but doesn't need manual implementation for the library's polling loop
 	return []interface{}{}, nil

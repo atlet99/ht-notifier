@@ -129,24 +129,59 @@ func (s *Slack) buildMessageBlocks(msg *Message) slack.Blocks {
 	blockSet := []slack.Block{}
 
 	// 1. Header Section
-	if msg.Title != "" {
-		headerText := slack.NewTextBlockObject(slack.MarkdownType, fmt.Sprintf("*%s*", msg.Title), false, false)
-		headerBlock := slack.NewSectionBlock(headerText, nil, nil)
-		blockSet = append(blockSet, headerBlock)
+	if block := s.buildHeaderBlock(msg); block != nil {
+		blockSet = append(blockSet, block)
 	}
 
 	// 2. Body Section
-	if msg.Body != "" {
-		body := msg.Body
-		if s.slackConfig.MessageFormat.EscapeMarkdown {
-			body = s.escapeMarkdown(body)
-		}
-		bodyText := slack.NewTextBlockObject(slack.MarkdownType, body, false, false)
-		bodyBlock := slack.NewSectionBlock(bodyText, nil, nil)
-		blockSet = append(blockSet, bodyBlock)
+	if block := s.buildBodyBlock(msg); block != nil {
+		blockSet = append(blockSet, block)
 	}
 
 	// 3. Fields Section (Severity, Project, etc.)
+	if block := s.buildFieldsBlock(msg); block != nil {
+		blockSet = append(blockSet, block)
+	}
+
+	// 4. HTML Section (if enabled)
+	if block := s.buildHTMLBlock(msg); block != nil {
+		blockSet = append(blockSet, block)
+	}
+
+	// 5. Action Section (Button)
+	if block := s.buildActionBlock(msg); block != nil {
+		blockSet = append(blockSet, block)
+	}
+
+	// 6. Context Section (Footer)
+	blockSet = append(blockSet, s.buildContextBlock())
+
+	return slack.Blocks{
+		BlockSet: blockSet,
+	}
+}
+
+func (s *Slack) buildHeaderBlock(msg *Message) slack.Block {
+	if msg.Title == "" {
+		return nil
+	}
+	headerText := slack.NewTextBlockObject(slack.MarkdownType, fmt.Sprintf("*%s*", msg.Title), false, false)
+	return slack.NewSectionBlock(headerText, nil, nil)
+}
+
+func (s *Slack) buildBodyBlock(msg *Message) slack.Block {
+	if msg.Body == "" {
+		return nil
+	}
+	body := msg.Body
+	if s.slackConfig.MessageFormat.EscapeMarkdown {
+		body = s.escapeMarkdown(body)
+	}
+	bodyText := slack.NewTextBlockObject(slack.MarkdownType, body, false, false)
+	return slack.NewSectionBlock(bodyText, nil, nil)
+}
+
+func (s *Slack) buildFieldsBlock(msg *Message) slack.Block {
 	var fields []*slack.TextBlockObject
 
 	// Add Severity counts if available
@@ -176,49 +211,49 @@ func (s *Slack) buildMessageBlocks(msg *Message) slack.Blocks {
 		fields = append(fields, slack.NewTextBlockObject(slack.MarkdownType, metaText.String(), false, false))
 	}
 
-	// If we have fields, add them in a section
-	if len(fields) > 0 {
-		// Slack allows max 10 fields per section
-		if len(fields) > 10 {
-			fields = fields[:10]
-		}
-		fieldsBlock := slack.NewSectionBlock(nil, fields, nil)
-		blockSet = append(blockSet, fieldsBlock)
+	if len(fields) == 0 {
+		return nil
 	}
 
-	// 4. HTML Section (if enabled)
-	if s.slackConfig.MessageFormat.EnableHTML && msg.HTML != "" {
-		// Slack doesn't support HTML directly, so we just append it as code block or text
-		htmlText := slack.NewTextBlockObject(slack.MarkdownType, "```\n"+msg.HTML+"\n```", false, false)
-		htmlBlock := slack.NewSectionBlock(htmlText, nil, nil)
-		blockSet = append(blockSet, htmlBlock)
+	// Slack allows max 10 fields per section
+	if len(fields) > slackFieldsLimit {
+		fields = fields[:slackFieldsLimit]
 	}
+	return slack.NewSectionBlock(nil, fields, nil)
+}
 
-	// 5. Action Section (Button)
-	if msg.Link != "" {
-		btnTxt := slack.NewTextBlockObject(slack.PlainTextType, "Open in Harbor", false, false)
-		btn := slack.NewButtonBlockElement("action_open_harbor", "open_harbor", btnTxt)
-		btn.URL = msg.Link
-		btn.Style = slack.StylePrimary
-
-		actionBlock := slack.NewActionBlock("actions", btn)
-		blockSet = append(blockSet, actionBlock)
+func (s *Slack) buildHTMLBlock(msg *Message) slack.Block {
+	if !s.slackConfig.MessageFormat.EnableHTML || msg.HTML == "" {
+		return nil
 	}
+	// Slack doesn't support HTML directly, so we just append it as code block or text
+	htmlText := slack.NewTextBlockObject(slack.MarkdownType, "```\n"+msg.HTML+"\n```", false, false)
+	return slack.NewSectionBlock(htmlText, nil, nil)
+}
 
-	// 6. Context Section (Footer)
+func (s *Slack) buildActionBlock(msg *Message) slack.Block {
+	if msg.Link == "" {
+		return nil
+	}
+	btnTxt := slack.NewTextBlockObject(slack.PlainTextType, "Open in Harbor", false, false)
+	btn := slack.NewButtonBlockElement("action_open_harbor", "open_harbor", btnTxt)
+	btn.URL = msg.Link
+	btn.Style = slack.StylePrimary
+
+	return slack.NewActionBlock("actions", btn)
+}
+
+func (s *Slack) buildContextBlock() slack.Block {
 	contextElements := []slack.MixedElement{
 		slack.NewTextBlockObject(slack.MarkdownType, fmt.Sprintf("Time: %s", time.Now().Format(time.RFC3339)), false, false),
 	}
 	if s.slackConfig.MessageFormat.CustomSuffix != "" {
-		contextElements = append(contextElements, slack.NewTextBlockObject(slack.MarkdownType, s.slackConfig.MessageFormat.CustomSuffix, false, false))
+		// Used local var for custom suffix to keep line short
+		suffix := s.slackConfig.MessageFormat.CustomSuffix
+		contextElements = append(contextElements, slack.NewTextBlockObject(slack.MarkdownType, suffix, false, false))
 	}
 
-	contextBlock := slack.NewContextBlock("context", contextElements...)
-	blockSet = append(blockSet, contextBlock)
-
-	return slack.Blocks{
-		BlockSet: blockSet,
-	}
+	return slack.NewContextBlock("context", contextElements...)
 }
 
 // getSeverityColor returns the hex color for the highest severity in the message
@@ -237,11 +272,12 @@ func (s *Slack) getSeverityColor(msg *Message) string {
 
 	// Check summary counts - prioritize critical > high > medium
 	if len(msg.SeverityCounts) > 0 {
-		if msg.SeverityCounts["Critical"] > 0 {
+		switch {
+		case msg.SeverityCounts["Critical"] > 0:
 			return s.resolveSeverityColor("critical")
-		} else if msg.SeverityCounts["High"] > 0 {
+		case msg.SeverityCounts["High"] > 0:
 			return s.resolveSeverityColor("high")
-		} else if msg.SeverityCounts["Medium"] > 0 {
+		case msg.SeverityCounts["Medium"] > 0:
 			return s.resolveSeverityColor("medium")
 		}
 	}

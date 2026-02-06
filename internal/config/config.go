@@ -234,23 +234,25 @@ type EmailConfig struct {
 
 // SMTPConfig holds SMTP server configuration.
 type SMTPConfig struct {
-	Host               string        `yaml:"host" mapstructure:"host"`
-	Port               int           `yaml:"port" mapstructure:"port"`
-	Username           string        `yaml:"username" mapstructure:"username"`
-	Password           string        `yaml:"password" mapstructure:"password"`
-	From               string        `yaml:"from" mapstructure:"from"`
-	StartTLS           bool          `yaml:"starttls" mapstructure:"starttls"`
-	Timeout            time.Duration `yaml:"timeout" mapstructure:"timeout"`
-	AuthType           string        `yaml:"auth_type" mapstructure:"auth_type"`   // "plain", "login", "crammd5", "scram", "xoauth2"
-	Encryption         string        `yaml:"encryption" mapstructure:"encryption"` // "none", "ssl", "tls"
-	HELOHost           string        `yaml:"helo_host" mapstructure:"helo_host"`
-	LocalName          string        `yaml:"local_name" mapstructure:"local_name"`
-	DisableHELO        bool          `yaml:"disable_helo" mapstructure:"disable_helo"`
-	DisableSTARTTLS    bool          `yaml:"disable_starttls" mapstructure:"disable_starttls"`
-	SSLInsecure        bool          `yaml:"ssl_insecure" mapstructure:"ssl_insecure"`
-	SSNOCHECK          bool          `yaml:"ssl_nocertcheck" mapstructure:"ssl_nocertcheck"`
-	SSNoverify         bool          `yaml:"ssl_noverify" mapstructure:"ssl_noverify"`
-	SSNoverifyHostname bool          `yaml:"ssl_noverify_hostname" mapstructure:"ssl_noverify_hostname"` // Skip hostname verification in SSL certificate
+	Host     string        `yaml:"host" mapstructure:"host"`
+	Port     int           `yaml:"port" mapstructure:"port"`
+	Username string        `yaml:"username" mapstructure:"username"`
+	Password string        `yaml:"password" mapstructure:"password"`
+	From     string        `yaml:"from" mapstructure:"from"`
+	StartTLS bool          `yaml:"starttls" mapstructure:"starttls"`
+	Timeout  time.Duration `yaml:"timeout" mapstructure:"timeout"`
+	// "plain", "login", "crammd5", "scram", "xoauth2"
+	AuthType        string `yaml:"auth_type" mapstructure:"auth_type"`
+	Encryption      string `yaml:"encryption" mapstructure:"encryption"` // "none", "ssl", "tls"
+	HELOHost        string `yaml:"helo_host" mapstructure:"helo_host"`
+	LocalName       string `yaml:"local_name" mapstructure:"local_name"`
+	DisableHELO     bool   `yaml:"disable_helo" mapstructure:"disable_helo"`
+	DisableSTARTTLS bool   `yaml:"disable_starttls" mapstructure:"disable_starttls"`
+	SSLInsecure     bool   `yaml:"ssl_insecure" mapstructure:"ssl_insecure"`
+	SSNOCHECK       bool   `yaml:"ssl_nocertcheck" mapstructure:"ssl_nocertcheck"`
+	SSNoverify      bool   `yaml:"ssl_noverify" mapstructure:"ssl_noverify"`
+	// Skip hostname verification in SSL certificate
+	SSNoverifyHostname bool `yaml:"ssl_noverify_hostname" mapstructure:"ssl_noverify_hostname"`
 }
 
 // ProcessingConfig holds event processing configuration.
