@@ -117,6 +117,24 @@ linters:
 issues:
   max-issues-per-linter: 0
   max-same-issues: 0
+  exclude-dirs:
+    - test_results
+    - docs
+    - bin
+    - dist
+  exclude-rules:
+    - path: ^test_results/
+      linters:
+        - all
+    - path: ^docs/
+      linters:
+        - all
+    - path: ^bin/
+      linters:
+        - all
+    - path: ^dist/
+      linters:
+        - all
 
 formatters:
   enable:

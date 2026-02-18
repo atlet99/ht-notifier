@@ -20,7 +20,7 @@ GO_HEADER="// $COPYRIGHT
 // limitations under the License."
 
 # Find all Go files
-find . -name "*.go" -not -path "./vendor/*" -not -path "./.git/*" -not -path "./hack/*" | while read -r file; do
+find . -name "*.go" -not -path "./vendor/*" -not -path "./.git/*" -not -path "./hack/*" -not -path "./test_results/*" -not -path "./docs/*" -not -path "./bin/*" -not -path "./dist/*" | while read -r file; do
     # Check if file already has any copyright header
     if head -n 20 "$file" | grep -i -q "Copyright" 2>/dev/null; then
         echo "✓ $file (already has copyright)"
