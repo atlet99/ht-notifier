@@ -96,7 +96,6 @@ func NewHandler(
 	healthChecker *health.CompositeChecker,
 	webhookMetrics *obs.Metrics,
 ) *Handler {
-
 	// Create authentication config
 	authConfig := AuthConfig{
 		APIKeyHeader: cfg.Server.HMACSecret,
