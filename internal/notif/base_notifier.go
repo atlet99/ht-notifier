@@ -1,4 +1,4 @@
-// Copyright (c) 2025 Abdurakhman Rakhmankulov
+// Copyright (c) 2026 Abdurakhman Rakhmankulov
 //
 // Licensed under the MIT License (the "License");
 // you may not use this file except in compliance with the License.
@@ -35,6 +35,11 @@ func NewBaseNotifier(name string, limiter RateLimiter) *BaseNotifier {
 		metrics: NotifierMetrics{},
 		name:    name,
 	}
+}
+
+// Name returns the name of this notifier
+func (b *BaseNotifier) Name() string {
+	return b.name
 }
 
 // ApplyRateLimit applies rate limiting if configured

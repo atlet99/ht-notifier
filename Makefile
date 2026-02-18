@@ -23,6 +23,14 @@ CGO_ENABLED := 0
 BIN_DIR := bin
 DIST_DIR := dist
 
+# Tool Paths
+GOPATH ?= $(shell go env GOPATH)
+GOLANGCI_LINT = $(GOPATH)/bin/golangci-lint
+STATICCHECK = $(GOPATH)/bin/staticcheck
+GOIMPORTS = $(GOPATH)/bin/goimports
+GOSEC = $(GOPATH)/bin/gosec
+ERRCHECK = $(GOPATH)/bin/errcheck
+
 help: ## Show this help message
 	@echo 'Usage: make [target]'
 	@echo ''
@@ -47,17 +55,17 @@ test-coverage: test ## Run tests with coverage report
 
 fmt: ## Format code
 	go fmt ./...
-	@if command -v goimports > /dev/null; then \
-		goimports -w .; \
+	@if [ -f $(GOIMPORTS) ]; then \
+		$(GOIMPORTS) -w .; \
 	else \
-		echo "goimports not found, install with: go install golang.org/x/tools/cmd/goimports@latest"; \
+		echo "goimports not found at $(GOIMPORTS), install with: make install-tools"; \
 	fi
 
 lint: ## Run linter
-	@if command -v golangci-lint > /dev/null; then \
-		golangci-lint run; \
+	@if [ -f $(GOLANGCI_LINT) ]; then \
+		$(GOLANGCI_LINT) run; \
 	else \
-		echo "golangci-lint not found, install with: make install-tools"; \
+		echo "golangci-lint not found at $(GOLANGCI_LINT), install with: make install-tools"; \
 	fi
 
 vet: ## Run go vet
@@ -68,6 +76,10 @@ clean: ## Clean build artifacts
 
 run: build ## Run the server
 	./$(BIN_DIR)/ht-notifier
+
+.PHONY: run-mock
+run-mock:
+	go run ./hack/mock-harbor/main.go
 
 deps: ## Download dependencies
 	go mod download
@@ -80,25 +92,25 @@ update: ## Update all dependencies to latest versions and create commit
 
 check-all: copyright-check ## Run all checks (copyright, format, goimports, lint)
 	@echo "Checking code formatting (gofmt)..."
-	@if find . -name "*.go" -not -path "./vendor/*" -not -path "./.git/*" | xargs gofmt -l | grep -q .; then \
+	@if find . -name "*.go" -not -path "./vendor/*" -not -path "./.git/*" -not -path "./test_results/*" -not -path "./docs/*" -not -path "./bin/*" -not -path "./dist/*" | xargs gofmt -l | grep -q .; then \
 		echo "❌ gofmt found issues. Run 'make fix-all' to fix."; \
-		find . -name "*.go" -not -path "./vendor/*" -not -path "./.git/*" | xargs gofmt -l; \
+		find . -name "*.go" -not -path "./vendor/*" -not -path "./.git/*" -not -path "./test_results/*" -not -path "./docs/*" -not -path "./bin/*" -not -path "./dist/*" | xargs gofmt -l; \
 		exit 1; \
 	fi
 	@echo "✅ gofmt check passed"
-	@if command -v goimports > /dev/null; then \
+	@if [ -f $(GOIMPORTS) ]; then \
 		echo "Running goimports check..."; \
-		if find . -name "*.go" -not -path "./vendor/*" -not -path "./.git/*" | xargs goimports -d | grep -q .; then \
+		if find . -name "*.go" -not -path "./vendor/*" -not -path "./.git/*" -not -path "./test_results/*" -not -path "./docs/*" -not -path "./bin/*" -not -path "./dist/*" | xargs $(GOIMPORTS) -d | grep -q .; then \
 			echo "❌ goimports found issues. Run 'make fix-all' to fix."; \
 			exit 1; \
 		fi; \
 		echo "✅ goimports check passed"; \
 	else \
-		echo "⚠️  goimports not found, skipping check. Install with: go install golang.org/x/tools/cmd/goimports@latest"; \
+		echo "⚠️  goimports not found at $(GOIMPORTS), skipping check. Install with: make install-tools"; \
 	fi
 	@echo "Running linter (golangci-lint)..."
-	@if command -v golangci-lint > /dev/null; then \
-		golangci-lint run; \
+	@if [ -f $(GOLANGCI_LINT) ]; then \
+		$(GOLANGCI_LINT) run; \
 		if [ $$? -eq 0 ]; then \
 			echo "✅ linter check passed"; \
 		else \
@@ -106,16 +118,16 @@ check-all: copyright-check ## Run all checks (copyright, format, goimports, lint
 			exit 1; \
 		fi; \
 	else \
-		echo "⚠️  golangci-lint not found, skipping check. Install with: make install-tools"; \
+		echo "⚠️  golangci-lint not found at $(GOLANGCI_LINT), skipping check. Install with: make install-tools"; \
 	fi
 
 fix-all: copyright-add fmt ## Fix all issues (copyright, format, goimports)
-	@if command -v goimports > /dev/null; then \
+	@if [ -f $(GOIMPORTS) ]; then \
 		echo "Running goimports to fix imports..."; \
-		find . -name "*.go" -not -path "./vendor/*" -not -path "./.git/*" | xargs goimports -w; \
+		find . -name "*.go" -not -path "./vendor/*" -not -path "./.git/*" -not -path "./test_results/*" -not -path "./docs/*" -not -path "./bin/*" -not -path "./dist/*" | xargs $(GOIMPORTS) -w; \
 		echo "✅ goimports fixes applied"; \
 	else \
-		echo "⚠️  goimports not found, skipping. Install with: go install golang.org/x/tools/cmd/goimports@latest"; \
+		echo "⚠️  goimports not found at $(GOIMPORTS), skipping. Install with: make install-tools"; \
 	fi
 	@echo "✅ All fixes applied"
 

@@ -1,4 +1,4 @@
-// Copyright (c) 2025 Abdurakhman Rakhmankulov
+// Copyright (c) 2026 Abdurakhman Rakhmankulov
 //
 // Licensed under the MIT License (the "License");
 // you may not use this file except in compliance with the License.

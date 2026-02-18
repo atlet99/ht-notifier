@@ -1,4 +1,4 @@
-// Copyright (c) 2025 Abdurakhman Rakhmankulov
+// Copyright (c) 2026 Abdurakhman Rakhmankulov
 //
 // Licensed under the MIT License (the "License");
 // you may not use this file except in compliance with the License.
@@ -113,7 +113,7 @@ func Wire(cfg *config.Config) (*App, error) {
 	)
 
 	// Create HTTP handler
-	httpHandler := httpx.NewHandler(cfg, logger, securityManager, eventProcessor, notifiers, healthChecker)
+	httpHandler := httpx.NewHandler(cfg, logger, securityManager, eventProcessor, notifiers, healthChecker, metrics)
 
 	// Create application
 	app, err := New(cfg, logger, httpHandler, notifiers, eventProcessor)
@@ -181,7 +181,7 @@ func createNotifiers(cfg *config.Config, logger *zap.Logger) ([]notif.Notifier, 
 
 	// Create Slack notifier if enabled
 	if cfg.Notify.Slack.Enabled {
-		slackNotifier, err := notif.NewSlack(&cfg.Notify.Slack, limiter)
+		slackNotifier, err := notif.NewSlack(&cfg.Notify.Slack, limiter, logger)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create slack notifier: %w", err)
 		}

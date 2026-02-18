@@ -2,7 +2,7 @@
 
 # Check that all Go files have correct copyright header
 set -euo pipefail
-COPYRIGHT="Copyright (c) 2025 Abdurakhman Rakhmankulov"
+COPYRIGHT="Copyright (c) $(date +%Y) Abdurakhman Rakhmankulov"
 ERRORS=0
 
 # Find all Go files and check copyright
@@ -18,7 +18,7 @@ while IFS= read -r -d '' file; do
             ERRORS=$((ERRORS + 1))
         fi
     fi
-done < <(find . -name "*.go" -not -path "./vendor/*" -not -path "./.git/*" -not -path "./hack/*" -print0)
+done < <(find . -name "*.go" -not -path "./vendor/*" -not -path "./.git/*" -not -path "./hack/*" -not -path "./test_results/*" -not -path "./docs/*" -not -path "./bin/*" -not -path "./dist/*" -print0)
 
 if [ $ERRORS -eq 0 ]; then
     echo "✅ All files have correct copyright"

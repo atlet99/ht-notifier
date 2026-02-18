@@ -1,4 +1,4 @@
-// Copyright (c) 2025 Abdurakhman Rakhmankulov
+// Copyright (c) 2026 Abdurakhman Rakhmankulov
 //
 // Licensed under the MIT License (the "License");
 // you may not use this file except in compliance with the License.
@@ -22,7 +22,6 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
-	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 
 	"github.com/atlet99/ht-notifier/internal/config"
@@ -95,10 +94,8 @@ func NewHandler(
 	eventProcessor *proc.HarborEventProcessor,
 	notifiers []notif.Notifier,
 	healthChecker *health.CompositeChecker,
+	webhookMetrics *obs.Metrics,
 ) *Handler {
-	// Create metrics
-	webhookMetrics := obs.NewMetrics(prometheus.DefaultRegisterer, "ht_notifier")
-
 	// Create authentication config
 	authConfig := AuthConfig{
 		APIKeyHeader: cfg.Server.HMACSecret,

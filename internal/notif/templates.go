@@ -1,4 +1,4 @@
-// Copyright (c) 2025 Abdurakhman Rakhmankulov
+// Copyright (c) 2026 Abdurakhman Rakhmankulov
 //
 // Licensed under the MIT License (the "License");
 // you may not use this file except in compliance with the License.
@@ -456,17 +456,17 @@ func (t *MessageTemplates) severityFunctions() template.FuncMap {
 func (t *MessageTemplates) severityIcon(severity string) string {
 	switch strings.ToUpper(severity) {
 	case "CRITICAL":
-		return "🔴"
+		return severityColorCritical
 	case "HIGH":
-		return "🟠"
+		return severityColorHigh
 	case "MEDIUM":
-		return "🟡"
+		return severityColorMedium
 	case "LOW":
-		return "🟢"
+		return severityColorLow
 	case "UNKNOWN":
-		return "⚪"
+		return severityColorUnknown
 	default:
-		return "⚪"
+		return severityColorUnknown
 	}
 }
 

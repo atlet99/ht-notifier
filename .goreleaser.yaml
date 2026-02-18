@@ -1,6 +1,6 @@
 # GoReleaser config for ht-notifier
-
 # Version is read from .release-version into RELEASE_VERSION
+
 version: 2
 
 project_name: ht-notifier
@@ -27,12 +27,6 @@ builds:
     goarch:
       - amd64
       - arm64
-    goarm:
-      - "7"
-    ignore:
-      - goos: darwin
-        goarch: arm64
-        goarm: "7"
 
 archives:
   - id: default
@@ -42,6 +36,7 @@ archives:
       - README.md
       - LICENSE
       - config.example.yaml
+      - templates/examples/**/*
 
 checksum:
   name_template: "{{ .ProjectName }}_{{ .Version }}_checksums.txt"
@@ -82,12 +77,11 @@ release:
   header: |
     ## ht-notifier {{ .Tag }}
 
-    Release {{ .Tag }} of ht-notifier - Harbor webhook event notifier for Telegram, Slack, Mattermost, and Email.
+    Release {{ .Tag }} of ht-notifier.
 
     ### Docker Images (signed with Cosign)
 
     Docker images are available at GitHub Container Registry (ghcr.io). All images are signed with Cosign:
-
     - `ht-notifier:{{ .Version }}` and `ht-notifier:latest`
 
     Verify image signatures using the public key from the repository:
@@ -95,20 +89,14 @@ release:
     ```bash
     export USERNAME=<your-github-username>
     cosign login ghcr.io -u "$USERNAME"
-    cosign verify --key cosign.pub ghcr.io/{{ .Env.DOCKER_REPO_PATH }}/ht-notifier:{{ .Version }}
+    cosign verify --key cosign.pub ghcr.io/{{ .Env.DOCKER_REPO_PATH }}:{{ .Version }}
     ```
 
     The `cosign.pub` file is available in the repository root.
 
     ### Binaries (signed with GPG)
 
-    This release includes the following binaries, signed with GPG:
-
-    - `ht-notifier` - Harbor webhook event notifier server
-
-    ### Installation
-
-    Download the appropriate binary or archive for your platform from the assets below.
+    This release includes the `ht-notifier` binary, signed with GPG.
 
     ### Verification
 
@@ -129,8 +117,6 @@ release:
     ```bash
     # For Linux amd64
     gpg --verify ht-notifier_linux_amd64.sig ht-notifier
-
-    # For other platforms, replace linux_amd64 with your platform (e.g., darwin_arm64v8, windows_amd64)
     ```
   footer: |
     **Full Changelog**: {{ .Env.GITHUB_REPO_URL }}/compare/{{ .PreviousTag }}...{{ .Tag }}
@@ -153,6 +139,7 @@ changelog:
       - "^chore: schema update$"
       - "^chore\\(deps\\): "
       - "^(build|ci): "
+      - "merge conflict"
       - "merge conflict"
       - Merge pull request
       - Merge remote-tracking branch
@@ -187,8 +174,7 @@ changelog:
       regexp: '^.*?(\[CI\]|\[CHORE\]|\[LINT\]|ci(\(.+\))?!?:|build(\(.+\))?!?:|chore(\(.+\))?!?:|lint(\(.+\))?!?:).*$'
       order: 500
     - title: "Dependencies"
-      regexp: '^.*?Bump .*$'
+      regexp: "^.*?Bump .*$"
       order: 600
     - title: "Other work"
       order: 9999
-
